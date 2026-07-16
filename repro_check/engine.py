@@ -161,13 +161,25 @@ def apply_patch(src: str, diagnosis: dict, target_dir: Path):
         # `print(...)` already has '(' right after the keyword and is left alone)
         chevron = re.compile(r'^(\s*)print\s*>>\s*([^,]+),\s*(.*?)\s*$')
         stmt = re.compile(r'^(\s*)print\s+(?!\()(.*?)\s*$')
-        for line in code.splitlines():
+        # A Py2 print statement can span physical lines via backslash continuation
+        # (`print a, \`  /  `      b`). Join such continuations into one logical
+        # line BEFORE matching, so the wrap captures the whole statement — else we
+        # skip it and wrongly report "no print statements converted".
+        raw = code.splitlines()
+        lines, i = [], 0
+        while i < len(raw):
+            cur = raw[i]
+            while cur.rstrip().endswith("\\") and i + 1 < len(raw):
+                cur = cur.rstrip()[:-1].rstrip() + " " + raw[i + 1].strip()
+                i += 1
+            lines.append(cur); i += 1
+        for line in lines:
             mc = chevron.match(line)
             ms = stmt.match(line)
             if mc:
                 indent, stream, rest = mc.groups()
                 out.append(f'{indent}print({rest}, file={stream})'); n += 1
-            elif ms and not line.rstrip().endswith("\\"):
+            elif ms:
                 indent, rest = ms.groups()
                 # skip if it's clearly not a statement (e.g. `print` alone, or a comment)
                 if rest and not rest.startswith("#"):
@@ -555,6 +567,11 @@ def build_handoff(target_dir, ep, patches, installed, attempts, *, diag=None,
                          else "0 (does not start)",
         "entrypoint": str(Path(ep).relative_to(target_dir)),
         "run_as_module": module_mode,
+        # Top-level patches/installed mirror the RAN-result shape so any consumer
+        # can read res["patches"] uniformly regardless of outcome. `already_applied`
+        # keeps the flattened change-strings for the human-readable hand-off note.
+        "patches": patches,
+        "installed": installed,
         "already_applied": {
             "patches": [p.get("change") for p in patches],
             "installed": [d["pkg"] for d in installed],
