@@ -1,0 +1,25 @@
+name: self-test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: install
+        run: pip install -e .
+      - name: run self-test
+        run: python tests/test_repro.py
+      - name: smoke-test the CLI on the bundled fixture
+        run: |
+          cp -r fixtures/example_paper /tmp/paper
+          python -m repro_check /tmp/paper
