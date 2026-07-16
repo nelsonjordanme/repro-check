@@ -89,6 +89,19 @@ running repo means it executes, not that the science is sound.
 
 ## Status
 
+v0.3 — deepened the two hand-off / repair paths that matter most on real repos:
+
+- **Concrete run-time-argument hand-off.** When a repo runs but exits demanding
+  command-line arguments (the single most common wall past the first crash), the
+  hand-off no longer just says "read the README" — it parses argparse output, the
+  entry point's `add_argument` calls, and README examples to emit a **ready-to-run
+  suggested command**, the required flags with their help text, and the data files
+  in the repo that can fill path arguments.
+- **Dependency-free Python-2 `print` converter.** Replaced the old `lib2to3`
+  fixer (removed in Python 3.13, which this project's own CI runs) with a
+  self-contained converter that rewrites Py2 `print` statements and refuses to
+  write syntactically broken source.
+
 v0.2 — reframed from a pattern-library to a **scaffold + hand-off** after a
 45-repo ReScience-C study (28% run as-cloned → 37% with verified repair). Engine
 validated on a synthetic fixture and demonstrated end-to-end on a real repo. The

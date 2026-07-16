@@ -146,25 +146,45 @@ def apply_patch(src: str, diagnosis: dict, target_dir: Path):
         new = pat.sub(r"yaml.load(\1, Loader=yaml.SafeLoader)", src)
         return new, {"pattern": p, "change": f"add Loader=yaml.SafeLoader to {n} yaml.load() call(s)"}
     if p == "PY2_SYNTAX":
-        # Targeted Python-2 -> 3 conversion, print/exec fixers only. This is a
-        # syntactic (not scientific) transform, applied to the FILE named in the
-        # traceback rather than the passed entry-point source.
-        import lib2to3.refactor as _rt
+        # Targeted Python-2 -> 3 conversion of the dominant breakage: the Py2
+        # `print` STATEMENT (`print "x"` / `print >>f, x`). Applied to the FILE
+        # named in the traceback. lib2to3 (the old 2to3 engine) was removed in
+        # Python 3.13, so this is a self-contained, dependency-free converter —
+        # it wraps only unambiguous print-statement lines and refuses anything
+        # it can't rewrite safely rather than corrupt the source.
         tgt = diagnosis.get("file")
         if not tgt or not Path(tgt).exists():
             return None, "py2 syntax error but source file not locatable"
         code = Path(tgt).read_text()
-        rtool = _rt.RefactoringTool(["lib2to3.fixes.fix_print",
-                                     "lib2to3.fixes.fix_exec"])
-        try:
-            fixed = str(rtool.refactor_string(code if code.endswith("\n") else code + "\n",
-                                              "target"))
-        except Exception as e:
-            return None, f"2to3 print/exec conversion failed: {type(e).__name__}"
-        if fixed == code:
-            return None, "no print/exec statements converted (different py2 issue)"
+        out, n = [], 0
+        # `print >>sys.stderr, x`  and  `print x`  (statement forms only; a call
+        # `print(...)` already has '(' right after the keyword and is left alone)
+        chevron = re.compile(r'^(\s*)print\s*>>\s*([^,]+),\s*(.*?)\s*$')
+        stmt = re.compile(r'^(\s*)print\s+(?!\()(.*?)\s*$')
+        for line in code.splitlines():
+            mc = chevron.match(line)
+            ms = stmt.match(line)
+            if mc:
+                indent, stream, rest = mc.groups()
+                out.append(f'{indent}print({rest}, file={stream})'); n += 1
+            elif ms and not line.rstrip().endswith("\\"):
+                indent, rest = ms.groups()
+                # skip if it's clearly not a statement (e.g. `print` alone, or a comment)
+                if rest and not rest.startswith("#"):
+                    out.append(f'{indent}print({rest})'); n += 1
+                else:
+                    out.append(line)
+            else:
+                out.append(line)
+        if n == 0:
+            return None, "no Py2 print statements converted (different py2 issue — hand to agent)"
+        fixed = "\n".join(out) + ("\n" if code.endswith("\n") else "")
+        try:                                    # never write syntactically broken source
+            compile(fixed, tgt, "exec")
+        except SyntaxError as e:
+            return None, f"Py2 print rewrite left a syntax error ({e.msg}) — hand to agent"
         Path(tgt).write_text(fixed)   # patch the actual failing file in place
-        return src, {"pattern": p, "change": f"2to3 print/exec on {Path(tgt).name}",
+        return src, {"pattern": p, "change": f"Py2 print statements -> print() in {Path(tgt).name} ({n})",
                      "file": tgt, "side_effect": True}
     return None, f"pattern {p} has no automated repair (hand to agent)"
 
@@ -404,6 +424,90 @@ NEXT_ACTION = {
 }
 
 
+def extract_cli_spec(entrypoint, target_dir, attempts=None):
+    """When a repo stops on missing run-time arguments, gather everything needed
+    to suggest the exact invocation — instead of just telling the human to read
+    the README. Three independent sources, best-effort and never raising:
+
+      1. the argparse usage line + 'the following arguments are required' line
+         that argparse itself printed to stderr on the failing run;
+      2. an AST scan of the entry point for `add_argument(...)` calls (flag
+         names, required=, help=, choices=, default=);
+      3. example invocations found in the repo's README(s).
+
+    Also scans the repo for data files whose names resemble a path-type argument,
+    so a concrete command can be proposed. Returns a dict (possibly with empty
+    fields); the caller decides how much to surface.
+    """
+    import ast
+    ep = Path(entrypoint)
+    td = Path(target_dir)
+    spec = {"required": [], "optional": [], "usage_line": None,
+            "readme_examples": [], "candidate_data_files": [], "suggested_command": None}
+
+    # 1. argparse output from the failing run's stderr
+    if attempts:
+        for a in reversed(attempts):
+            err = a.get("stderr") or ""
+            m = re.search(r"^usage:.*$", err, re.M)
+            if m:
+                spec["usage_line"] = m.group(0).strip()
+            m2 = re.search(r"the following arguments are required:\s*(.+)", err)
+            if m2:
+                # keep the SAME dict shape the AST scan produces, so downstream
+                # code can treat every entry uniformly (flags list + help)
+                spec["required"] = [{"flags": [x.strip()], "help": None}
+                                    for x in re.split(r"[,\s]+", m2.group(1))
+                                    if x.strip().startswith("-")]
+            if spec["usage_line"] or spec["required"]:
+                break
+
+    # 2. AST scan of the entry point for add_argument calls
+    try:
+        tree = ast.parse(ep.read_text(errors="ignore"))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "add_argument"):
+                flags = [a.value for a in node.args
+                         if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+                if not flags:
+                    continue
+                kw = {k.arg: k.value for k in node.keywords}
+                required = isinstance(kw.get("required"), ast.Constant) and kw["required"].value is True
+                helptxt = kw["help"].value if isinstance(kw.get("help"), ast.Constant) else None
+                entry = {"flags": flags, "help": helptxt}
+                (spec["required"] if required else spec["optional"]).append(entry)
+    except Exception:
+        pass
+
+    # 3. README example invocations
+    for readme in list(td.glob("README*")) + list(td.glob("*/README*")):
+        try:
+            for line in readme.read_text(errors="ignore").splitlines():
+                s = line.strip().lstrip("$ ").strip()
+                if re.match(r"python[3]?\s", s) and ("--" in s or ep.name in s):
+                    spec["readme_examples"].append(s)
+        except Exception:
+            pass
+    spec["readme_examples"] = spec["readme_examples"][:5]
+
+    # 4. candidate data files (to fill path-type args)
+    for p in td.rglob("*"):
+        if p.is_file() and p.suffix.lower() in {".csv", ".json", ".npy", ".npz", ".txt", ".h5", ".pkl", ".tsv"}:
+            rel = p.relative_to(td).as_posix()
+            if "/.git/" not in "/" + rel:
+                spec["candidate_data_files"].append(rel)
+    spec["candidate_data_files"] = spec["candidate_data_files"][:12]
+
+    # 5. best suggested command: prefer a README example, else synthesise from usage
+    if spec["readme_examples"]:
+        spec["suggested_command"] = spec["readme_examples"][0]
+    elif spec["usage_line"]:
+        spec["suggested_command"] = "python " + str(ep.relative_to(td)) + "  " + \
+            " ".join(f["flags"][0] + " <value>" for f in spec["required"])
+    return spec
+
+
 def rc_next_action_key(diag, reason, traceback):
     tb = (traceback or "") + " " + (reason or "")
     if re.search(r"arguments are required|error: argument|SystemExit: 2", tb): return "CLI_ARGS"
@@ -423,6 +527,16 @@ def build_handoff(target_dir, ep, patches, installed, attempts, *, diag=None,
     # rung reached: 0 = didn't run at all, 1 = advanced but not to completion
     ran_any = any(a["returncode"] == 0 for a in attempts)
     advanced = len(attempts) > 1 or patches or installed
+    # For a CLI-args stop, gather the concrete invocation instead of "read the README".
+    cli_spec = None
+    if key == "CLI_ARGS":
+        try:
+            cli_spec = extract_cli_spec(ep, target_dir, attempts)
+        except Exception:
+            cli_spec = None
+        # the classifier tags argparse's SystemExit as UNKNOWN; give a real reason
+        if not reason or (isinstance(diag, dict) and diag.get("pattern") == "UNKNOWN"):
+            reason = "ran, but exited requiring command-line arguments (argparse)"
     return {
         "status": "NEEDS_AGENT",
         "stopping_rung": "1 (executability) — advanced but not running" if advanced
@@ -440,6 +554,7 @@ def build_handoff(target_dir, ep, patches, installed, attempts, *, diag=None,
                         "MPLBACKEND": "Agg", "KMP_DUPLICATE_LIB_OK": "TRUE"},
         "next_action_key": key,
         "suggested_next_action": NEXT_ACTION[key],
+        "cli_spec": cli_spec,
         "attempts": attempts,
     }
 
@@ -460,9 +575,24 @@ def render_handoff_md(h):
          "",
          f"## Why it stopped\n{h.get('reason') or (h.get('diagnosis') or {}).get('pattern','')}",
          "",
-         f"## Suggested next action ({h['next_action_key']})\n{h['suggested_next_action']}",
-         "",
-         "## Traceback (tail)", "```", h["traceback"].strip()[-1000:], "```"]
+         f"## Suggested next action ({h['next_action_key']})\n{h['suggested_next_action']}"]
+    cs = h.get("cli_spec")
+    if cs:
+        L += ["", "## Run-time arguments this script needs"]
+        if cs.get("suggested_command"):
+            L += [f"Try:\n```\n{cs['suggested_command']}\n```"]
+        if cs.get("usage_line"):
+            L += [f"argparse usage: `{cs['usage_line']}`"]
+        for e in cs.get("required", []):
+            if isinstance(e, dict):
+                L.append(f"- required `{' / '.join(e['flags'])}`"
+                         + (f" — {e['help']}" if e.get("help") else ""))
+        if cs.get("candidate_data_files"):
+            L.append("- data files present in the repo that may fill path args: "
+                     + ", ".join(f"`{f}`" for f in cs["candidate_data_files"][:6]))
+        if cs.get("readme_examples") and not cs.get("suggested_command"):
+            L += ["README shows:"] + [f"  `{x}`" for x in cs["readme_examples"][:3]]
+    L += ["", "## Traceback (tail)", "```", h["traceback"].strip()[-1000:], "```"]
     return "\n".join(L)
 
 
