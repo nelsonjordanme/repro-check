@@ -1,15 +1,20 @@
 ---
 name: repro-check
 description: >-
-  Make an old computational paper's code run again under a current environment,
-  and when it can't, hand back a structured note saying exactly where it stopped
-  and what to do next. Load this when asked to reproduce, replicate, re-run, or
-  revive a paper/repo's analysis, or to diagnose why old code no longer runs
-  (dependency rot, removed numpy/yaml APIs, hardcoded paths, missing packages,
-  OpenMP crashes, relative-import / entry-point problems, Python-2 syntax). It
-  discovers the entry point, sets up the environment, auto-applies a small set of
-  verified mechanical fixes, and stops honestly with an actionable hand-off — a
-  runnability scaffold for an agent, never a pass/fail verdict on the science.
+  Get old or broken Python code running again. Load this when code that used to
+  work won't run, an old repo or paper's analysis fails on a modern setup, or
+  someone wants to reproduce, replicate, re-run, revive, or just get a GitHub
+  repo or paper's code running, or to diagnose why a script errors on launch.
+  Handles common breakages verbatim: ModuleNotFoundError / No module named,
+  packages that won't install, "module numpy has no attribute float" and other
+  removed numpy/np.int APIs, yaml.load() missing-Loader errors, hardcoded paths
+  / FileNotFoundError, OpenMP "multiple copies of the OpenMP runtime" aborts,
+  "attempted relative import with no known parent package", which-file-do-I-run
+  entry-point confusion, and Python-2 syntax. It finds the entry point, fixes
+  the environment, auto-applies verified mechanical repairs, re-runs to prove
+  it, and when a failure needs judgment hands back a structured note on exactly
+  where it stopped and what to do next. A runnability scaffold, never a
+  pass/fail verdict on the science.
 ---
 
 # repro-check — a runnability scaffold for reproducing computational papers

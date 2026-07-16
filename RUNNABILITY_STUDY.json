@@ -66,13 +66,13 @@
     "corpus": "ReScience-C Python, 45 repos (43 evaluable, 2 dead clone links), arrival order",
     "runs_as_cloned": "12/43 (28%)",
     "after_current_fixes": "16/43 (37%) [yaml Loader, dep install, api-rename, path repoint]",
-    "reachable_with_this_session_fixes": "25/43 (58%) [+OpenMP KMP_DUPLICATE_LIB_OK (6), +numpy-attr rot (2), +run-as-module (1)]",
+    "reachable_with_this_session_fixes": "23/43 (~53.5%) [+OpenMP KMP_DUPLICATE_LIB_OK (6), +run-as-module (1); the 2 numpy-attr repos are dependency-internal rot, NOT source-fixable]. NOTE: an earlier v4 draft said 25/43 (58%) by counting those 2 numpy repos as fixable; corrected in v6_close_the_loop. This is an internal 'reachable' metric (crash cleared / advanced), separate from the public runs-to-completion figure of 16/43 (37%).",
     "genuine_agent_handoff": "5/19 of the reclassified tail are strictly bespoke; corpus-wide the agent-needed set is ~13-16/43 once main-run DEP/PATH failures and the 3 mixed cases are included.",
     "not_broken_timeouts": "2/43 (heavy real computation, needs bigger cap not a fix)",
     "key_correction": "The '63% bespoke tail' from v3 was WRONG. Capturing tracebacks showed that of the 19 UNKNOWN repos: 9 are recurring library-fixable patterns (dominated by ONE OpenMP crash, 6 repos, that a single env var neutralises), 5 are genuine agent hand-offs (CLI-args 2, shape ValueError 1, pandas/data 1, truly-bespoke 1), 3 are mixed/case-by-case, and 2 are timeouts (heavy runs, not broken). So 5 bespoke \u2014 at most 8 if the 3 mixed also need the agent \u2014 not the 63% implied before.",
     "openmp_fix_verified": "SimCLR: rc=-6 (OpenMP abort) WITHOUT -> clears WITH KMP_DUPLICATE_LIB_OK=TRUE, advances to dataset download (data availability, not code fault).",
     "revised_saturation_read": "Novelty did NOT truly saturate at ~11 repos \u2014 it only appeared to because the coarse classifier dumped everything into UNKNOWN. A finer classifier keeps finding teachable recurring patterns. Diminishing returns is FURTHER out than v3 implied.",
-    "library_vs_agent_boundary": "~58% reachable by a fixed library (env + rot + structure); ~37% genuinely needs the agent to read a traceback and reason. This quantifies the seam."
+    "library_vs_agent_boundary": "~53.5% reachable by a fixed library (env + rot + structure; the 2 numpy dependency-internal repos are NOT source-fixable, correcting the earlier ~58%); the rest genuinely needs the agent to read a traceback and reason. Public runs-to-completion figure is 16/43 (37%). This quantifies the seam."
   },
   "v6_close_the_loop": {
     "added_patterns": [
