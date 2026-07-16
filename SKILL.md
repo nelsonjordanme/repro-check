@@ -97,7 +97,7 @@ Kept intentionally small — only repairs that are unambiguous and verified:
   top-level equivalent; `itemset`/`newbyteorder` deliberately excluded);
 - **YAML_LOADER** → add the now-required `Loader=` to `yaml.load()`;
 - **PATH_HARDCODED** → repoint a hardcoded data path to the file in the repo;
-- **PY2_SYNTAX** → 2to3 print/exec conversion;
+- **PY2_SYNTAX** → dependency-free Py2 `print`-statement conversion (no lib2to3, which is gone in 3.13);
 - **RELATIVE_IMPORT** → re-run as `python -m pkg.mod`;
 - **OpenMP** → `KMP_DUPLICATE_LIB_OK=TRUE` (set for every run; cleared 6/43 crashes).
 
