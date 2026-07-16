@@ -1,5 +1,7 @@
 # repro-check
 
+[![self-test](https://github.com/nelsonjordanme/repro-check/actions/workflows/selftest.yml/badge.svg)](https://github.com/nelsonjordanme/repro-check/actions/workflows/selftest.yml)
+
 **A runnability scaffold for reproducing computational papers: it makes old code
 run again, and when it can't, hands back exactly where it stopped and what to do
 next.** An agent loads it; it is not a standalone app and not a pass/fail judge.
