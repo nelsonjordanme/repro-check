@@ -480,13 +480,25 @@ def extract_cli_spec(entrypoint, target_dir, attempts=None):
     except Exception:
         pass
 
-    # 3. README example invocations
+    # 3. README example invocations. Reject TEMPLATE/placeholder lines — a README
+    # that shows `python main.py --[keyword1] [argument1] ...` is documenting the
+    # SHAPE of the call, not a runnable command; surfacing it as "try this" hands
+    # the user a command that cannot run. Only keep lines that look concrete.
+    def is_placeholder(s):
+        return bool(
+            re.search(r"--\[[^\]]+\]", s)            # --[keyword1]
+            or re.search(r"[<\[](arg|keyword|value|option|param|name|path|input|output)", s, re.I)
+            or "..." in s or "…" in s
+            or re.search(r"<[^>]+>", s)              # <path>, <value>
+            or re.search(r"\{[^}]+\}", s)            # {input}
+        )
     for readme in list(td.glob("README*")) + list(td.glob("*/README*")):
         try:
             for line in readme.read_text(errors="ignore").splitlines():
                 s = line.strip().lstrip("$ ").strip()
                 if re.match(r"python[3]?\s", s) and ("--" in s or ep.name in s):
-                    spec["readme_examples"].append(s)
+                    if not is_placeholder(s):
+                        spec["readme_examples"].append(s)
         except Exception:
             pass
     spec["readme_examples"] = spec["readme_examples"][:5]
