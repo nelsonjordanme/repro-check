@@ -1,0 +1,26 @@
+{
+  "paper": "Example et al. (synthetic fixture) \u2014 X\u2013Y association study",
+  "claims": [
+    {
+      "id": "r_xy",
+      "desc": "Pearson correlation between x and y",
+      "kind": "deterministic",
+      "value": 0.566
+    },
+    {
+      "id": "treatment_effect",
+      "desc": "Mean y difference, treatment minus control",
+      "kind": "deterministic",
+      "value": 2.875
+    },
+    {
+      "id": "r_ci95",
+      "desc": "Bootstrap 95% CI for r_xy (2000 resamples)",
+      "kind": "stochastic",
+      "value": [
+        0.461,
+        0.656
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.repro_scratch/
+
+# generated reproduction reports
+repro_report.json
+repro_report.md
+
+# CI workflow added via GitHub web UI (token lacked workflow scope)

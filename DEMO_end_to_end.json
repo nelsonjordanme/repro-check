@@ -1,0 +1,46 @@
+{
+  "title": "End-to-end demonstration: scaffold + agent on a real ReScience repo",
+  "repo": "gabni-reproduction (Computer Science, ReScience-C)",
+  "loop": [
+    {
+      "actor": "scaffold",
+      "step": "ran gabni/cli.py as script",
+      "result": "ImportError: attempted relative import with no known parent package"
+    },
+    {
+      "actor": "scaffold",
+      "step": "auto-applied RELATIVE_IMPORT fix",
+      "result": "re-ran as `python -m gabni.cli`; relative-import error cleared"
+    },
+    {
+      "actor": "scaffold",
+      "step": "advanced to next blocker",
+      "result": "argparse: 'the following arguments are required: --input' -> STOPPED with structured hand-off"
+    },
+    {
+      "actor": "handoff",
+      "step": "emitted next_action_key=CLI_ARGS",
+      "result": "named entry point, module invocation, and pointed agent to README for required flags"
+    },
+    {
+      "actor": "agent",
+      "step": "read README + located bundled data (datasets/)",
+      "result": "found exact invocation: --input yeast_cell_cycle_timeseries_s2.csv --gold_edges ..."
+    },
+    {
+      "actor": "agent",
+      "step": "re-ran with args supplied",
+      "result": "RAN TO COMPLETION, exit 0"
+    }
+  ],
+  "final_output": {
+    "file": "results/summary_seed0.json",
+    "num_edges": 14,
+    "precision": 0.643,
+    "recall": 0.31,
+    "dynamics_accuracy": 1.0,
+    "structural_accuracy": 0.773
+  },
+  "significance": "Proves the tool-first reframe concretely: the fixed scaffold does the mechanical work reliably and stops honestly with an actionable hand-off; the agent does the irreducible judgment step (find data, read usage). Neither alone reproduces this repo; together they do. This is a real ReScience-C paper's code, not a synthetic fixture.",
+  "note_on_correctness": "'Runs to completion' \u2014 rung 1/2. Whether these edge-inference numbers MATCH the paper's published values (rung 3) is NOT asserted; that is the human's call, by design."
+}

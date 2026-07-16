@@ -1,0 +1,101 @@
+{
+  "corpus": "ReScience C \u2014 published+in-review Python repos",
+  "n_repos": 12,
+  "environment": "python 3.11 / numpy 2.4.6 / scipy 1.17.1 (2026 stack)",
+  "runnable_as_cloned_baseline": {
+    "ran": 3,
+    "rate_pct": 25
+  },
+  "runnable_after_repro_check": {
+    "ran": 4,
+    "rate_pct": 33,
+    "note": "auto entry-point discovery + known-pattern source patches + opt-in dependency install"
+  },
+  "headline": "3/12 (25%) of these repos run as-cloned under a 2026 environment; repro-check raised that to 4/12 (33%) automatically, and produced a diagnosed next-step for every remaining repo.",
+  "remaining_failure_taxonomy": {
+    "PY2_SYNTAX": 1,
+    "YAML_API_CHANGE": 2,
+    "NEEDS_CLI_ARGS": 1,
+    "LOCAL_PKG_NOT_ON_PYPI": 1,
+    "PKG_STRUCTURE": 1,
+    "IMPORT_NAME_MISMATCH": 1,
+    "UNRESOLVED_PATH": 1
+  },
+  "boundaries_confirmed": [
+    "erfit (ERpy): pip install was ATTEMPTED and FAILED (package not on PyPI); the tool then handed off to the agent. Outcome is correct, but v2 had no pre-check for local/unpublished modules \u2014 the same path would fire for a typo'd or lookalike name. See v3 fix below.",
+    "no-progress + no-op guards stop ineffective-patch loops (ramp-metering fixed) \u2014 real logic",
+    "dependency install advances repos to their NEXT real blocker (honest partial progress)"
+  ],
+  "next_patterns_to_add": [
+    "YAML_API_CHANGE (yaml.load needs Loader=)",
+    "PY2_SYNTAX (2to3 for print-statement etc.)",
+    "IMPORT_NAME_MISMATCH (pyDOE code importing pyDOE after pyDOE2 install)"
+  ],
+  "v2_update": {
+    "patterns_added": [
+      "YAML_LOADER (add Loader= to yaml.load)",
+      "PY2_SYNTAX (2to3 print/exec)"
+    ],
+    "auto_run_rate": {
+      "before": "4/12 (33%)",
+      "after": "6/12 (50%)"
+    },
+    "newly_running": [
+      "rescience-rollingpitching (yaml)",
+      "unitarity_repro (yaml)"
+    ],
+    "advanced_not_run": [
+      "ten-year-challenge-paper-3: py2 syntax fixed -> now fails on a real ValueError in the computation (honest deeper failure, hands off)"
+    ],
+    "known_fragility": "PY2_SYNTAX uses lib2to3 (deprecated; cannot parse 3.10+ syntax). Adequate for old py2 code but flag for replacement."
+  },
+  "saturation_question": {
+    "method": "count repos that force a NEW failure pattern into the library; watch the rate flatten",
+    "n_processed": 12,
+    "repos_teaching_novel": 8,
+    "honest_caveat": "The tail-flattening in the curve is NOT evidence of saturation \u2014 the discovery order was reconstructed post-hoc and the low-novelty repos happen to sit last. With n=12 and 67% still teaching something, the only defensible conclusion is that we are clearly PRE-saturation. A real saturation estimate needs repos processed in arrival order with the novelty rate tracked prospectively over a larger n (target ~40-60).",
+    "conclusion": "Not near diminishing returns. Continue expanding the corpus."
+  },
+  "v3_update": {
+    "fix": "Added looks_local() pre-check: a missing-import name that resolves to a .py file or package dir inside the repo is REFUSED for install before pip is called.",
+    "why": "v2 attempted `pip install <name>` for any missing module and only handed off after pip failed \u2014 so 'correctly refused erfit' described the outcome, not real logic, and the same path would fire for a typo'd or malicious lookalike name.",
+    "verified": "ERpy: erfit detected as local package dir -> NEEDS_AGENT with reason 'local module ... install refused', installed=[] (no pip attempt).",
+    "now_a_real_boundary": true
+  },
+  "full_corpus_v4": {
+    "corpus": "ReScience-C Python, 45 repos (43 evaluable, 2 dead clone links), arrival order",
+    "runs_as_cloned": "12/43 (28%)",
+    "after_current_fixes": "16/43 (37%) [yaml Loader, dep install, api-rename, path repoint]",
+    "reachable_with_this_session_fixes": "25/43 (58%) [+OpenMP KMP_DUPLICATE_LIB_OK (6), +numpy-attr rot (2), +run-as-module (1)]",
+    "genuine_agent_handoff": "5/19 of the reclassified tail are strictly bespoke; corpus-wide the agent-needed set is ~13-16/43 once main-run DEP/PATH failures and the 3 mixed cases are included.",
+    "not_broken_timeouts": "2/43 (heavy real computation, needs bigger cap not a fix)",
+    "key_correction": "The '63% bespoke tail' from v3 was WRONG. Capturing tracebacks showed that of the 19 UNKNOWN repos: 9 are recurring library-fixable patterns (dominated by ONE OpenMP crash, 6 repos, that a single env var neutralises), 5 are genuine agent hand-offs (CLI-args 2, shape ValueError 1, pandas/data 1, truly-bespoke 1), 3 are mixed/case-by-case, and 2 are timeouts (heavy runs, not broken). So 5 bespoke \u2014 at most 8 if the 3 mixed also need the agent \u2014 not the 63% implied before.",
+    "openmp_fix_verified": "SimCLR: rc=-6 (OpenMP abort) WITHOUT -> clears WITH KMP_DUPLICATE_LIB_OK=TRUE, advances to dataset download (data availability, not code fault).",
+    "revised_saturation_read": "Novelty did NOT truly saturate at ~11 repos \u2014 it only appeared to because the coarse classifier dumped everything into UNKNOWN. A finer classifier keeps finding teachable recurring patterns. Diminishing returns is FURTHER out than v3 implied.",
+    "library_vs_agent_boundary": "~58% reachable by a fixed library (env + rot + structure); ~37% genuinely needs the agent to read a traceback and reason. This quantifies the seam."
+  },
+  "v6_close_the_loop": {
+    "added_patterns": [
+      "NDARRAY_METHOD: a.ptp() -> np.ptp(a) (numpy 2.0 removal); restricted to ptp only after audit \u2014 itemset/newbyteorder have no top-level np equivalent"
+    ],
+    "key_finding_dependency_internal_rot": "The 2 'numpy ndarray.ptp' failures are NOT in the repos' own code \u2014 grep found no .ptp( in either source tree. The error is raised INSIDE a dependency (Brian2's fundamentalunits.py does `ptp = wrap_function_keep_dimensions(np.ndarray.ptp)` at import under numpy 2.0). So source-patching the repo cannot fix it; the real fix is pinning/upgrading the dependency or patching site-packages \u2014 squarely an AGENT/environment job, not a source-rewrite.",
+    "reclassification_correction": "These 2 repos were counted 'library-fixable (numpy-rot)' in v4. That was optimistic \u2014 they are dependency-internal rot, which the source-patch engine CANNOT fix. Corrected split of the 9 'library-fixable': 6 OpenMP (verified via env var), 1 run-as-module (verified), 2 dependency-internal-rot (NOT source-fixable -> agent/env). So verified-library-fixable is 7, not 9. Reachable = 16 (prior fixes) + 6 (OpenMP) + 1 (run-as-module) + 0 (ptp) = 23/43 (~53.5%), down from the optimistic v4 ~58%.",
+    "lesson": "'AttributeError from numpy' is ambiguous until you see WHERE it's raised. Rot in the repo's own code is source-fixable; identical rot inside a pinned dependency is not. The engine must distinguish traceback origin (repo vs site-packages) before claiming a fix."
+  },
+  "v7_loop_closed": {
+    "patterns_added_and_verified": {
+      "OPENMP (env var)": "VERIFIED fixes 6 repos \u2014 SimCLR rc=-6 abort -> clears, advances to data download",
+      "NDARRAY_METHOD a.ptp()->np.ptp(a)": "IMPLEMENTED + audited to ptp-only; but the 2 corpus cases turned out to be DEPENDENCY-INTERNAL (Brian2), so source-patch cannot help them",
+      "RELATIVE_IMPORT (run as -m)": "VERIFIED on gabni \u2014 relative-import error cleared; advanced to a --input CLI-arg requirement (correct hand-off)"
+    },
+    "honest_outcome": "Of the 3 'library-fixable' classes I set out to close: OpenMP clears the crash for 6 repos; run-as-module genuinely clears gabni's blocker (then a CLI-arg wall); the numpy-ptp pair are NOT source-fixable (dependency-internal). Net verified reachable = 23/43 (~53.5%), below the optimistic v4 projection of ~58%.",
+    "revised_reachable_estimate": {
+      "runs_as_cloned": "12/43 (28%)",
+      "plus_prior_fixes": "16/43 (37%)  [yaml Loader, dep install, api-rename, path repoint]",
+      "plus_openmp_and_run_as_module": "23/43 (~53.5%)  [+6 OpenMP crashes cleared, +1 gabni run-as-module]",
+      "arithmetic": "16 + 6 + 1 + 0(ptp not source-fixable) = 23/43 = 53.5%",
+      "crash_cleared_vs_runs_to_completion": "23/43 is 'crash cleared / advanced past a plumbing wall'. FULLY runs-to-completion is LOWER: several of the +6/+1 advance only to a data-download or CLI-arg wall that is a genuine agent/human step (gabni needed --input + data supplied by hand)."
+    },
+    "clean_finding": "Closing the loop confirmed the architecture: plumbing fixes (env, structure) are cheap and reliable; the moment a fix lands, the NEXT blocker is disproportionately a genuine agent/human step (CLI args, missing data, in-code ValueError). The library clears the runway; the agent flies the plane."
+  }
+}
