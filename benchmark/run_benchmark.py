@@ -137,6 +137,10 @@ def main(argv=None):
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     args = ap.parse_args(argv)
     manifest = json.loads(Path(args.manifest).read_text())
+    # Accept either a bare list, or a {"repos": [...]} wrapper carrying metadata
+    # (_about/_source/_count) alongside the repo list.
+    if isinstance(manifest, dict):
+        manifest = manifest.get("repos", [])
     rows = run(manifest, do_clone=args.clone)
     summary = summarize(rows)
     if args.json:

@@ -1,0 +1,161 @@
+{
+  "_about": "ReScience Python replication repositories (code_url from the ReScience journal bibliography, language=Python). Run with `python benchmark/run_benchmark.py --manifest benchmark/rescience_manifest.json --clone` on a machine with memory + build tools. Heavy scientific installs need real RAM; this is NOT runnable in a 0-GiB-free sandbox.",
+  "_source": "github.com/ReScience/rescience.github.io/_bibliography/published.bib",
+  "_count": 22,
+  "repos": [
+    {
+      "name": "Bock:2019",
+      "url": "github.com/PaulineBock/WCSTDehaeneChangeux",
+      "title": "[Re] The Wisconsin Card Sorting Test: Theoretical analysis and modeling in a neu",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "tennoe:2019",
+      "url": "github.com/ReScience-Archives/Tenn-e-Hodne-Haug-Weltzien-Einevoll-Halnes-2019",
+      "title": "[Re] Fast-Activating Voltage- and Calcium-Dependent Potassium (BK) Conductance P",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "caze:2018",
+      "url": "github.com/ReScience-Archives/Caze-Stimberg-Girard-2018",
+      "title": "[Re] Non-additive coupling enables propagation of synchronous spiking activity i",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "shimoura:2018",
+      "url": "github.com/ReScience-Archives/ShimouraR-KamijiNL-PenaRFO-CordeiroVL-CeballosCC-RomaroC-RoqueAC-2017",
+      "title": "[Re] The cell-type specific cortical microcircuit: relating structure and activi",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "senden:2018",
+      "url": "github.com/ReScience-Archives/Senden-Schuecker-Hahne-Diesmann-Goebel-2018",
+      "title": "[Re] A neural model of the saccade generator in the reticular formation",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "mondeel:2018",
+      "url": "github.com/ReScience-Archives/Mondeel-Ogundipe-Westerhoff-2018",
+      "title": "[Re] Predicting metabolic biomarkers of human inborn errors of metabolism",
+      "domain": "Computational Biology",
+      "expected": null
+    },
+    {
+      "name": "bavard:2018",
+      "url": "github.com/ReScience-Archives/Bavard-Thero-2018",
+      "title": "[Re] Adaptive properties of differential learning rates for positive and negativ",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "hathway:2018",
+      "url": "github.com/ReScience-Archives/Hathway-Goodman-2018",
+      "title": "[Re] Spike Timing Dependent Plasticity Finds the Start of Repeating Patterns in ",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "shifman:2017",
+      "url": "github.com/ReScience-Archives/Shifman-2017",
+      "title": "[Re] Ionic Current Model of a Hypoglossal Motoneuron",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "henriques:2017",
+      "url": "github.com/ReScience-Archives/Henriques-Rokem-Garyfallidis-St-Jean-Peterson-Correia-2017",
+      "title": "[Re] Optimization of a free water elimination two-compartment model for diffusio",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "rostami:2017",
+      "url": "github.com/ReScience-Archives/Rostami-Ito-Denker-Gruen-2017",
+      "title": "[Re] Spike Synchronization and Rate Modulation Differentially Involved in Motor ",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "rougier:2017",
+      "url": "github.com/ReScience-Archives/Rougier-2017",
+      "title": "[Re] Weighted Voronoi Stippling",
+      "domain": "Computer Graphics",
+      "expected": null
+    },
+    {
+      "name": "stollmeier:2017",
+      "url": "github.com/ReScience-Archives/Stollmeier-2017",
+      "title": "[Re] A simple rule for the evolution of cooperation on graphs and social network",
+      "domain": "Game Theory",
+      "expected": null
+    },
+    {
+      "name": "metzner:2017",
+      "url": "github.com/ReScience-Archives/Metzner-2017",
+      "title": "[Re] Modeling GABA Alterations in Schizophrenia: A Link Between Impaired Inhibit",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "detorakis:2017",
+      "url": "github.com/ReScience-Archives/Detorakis-2017",
+      "title": "[Re] A Generalized Linear Integrate-and-Fire Neural Model Produces Diverse Spiki",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "diem:2017",
+      "url": "github.com/ReScience-Archives/Diem-2017",
+      "title": "[Re] A bidirectional model for communication in the neurovascular unit",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "viejo:2016",
+      "url": "github.com/ReScience-Archives/Viejo-Girard-Khamassi-2016",
+      "title": "[Re] Speed/accuracy trade-off between the habitual and the goal-directed process",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "detorakis:2016",
+      "url": "github.com/ReScience-Archives/Detorakis-2016.git",
+      "title": "[Re] Multiple dynamical modes of thalamic relay neurons: rhythmic bursting and i",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "vitay:2016",
+      "url": "github.com/ReScience-Archives/Vitay-2016",
+      "title": "[Re] Robust timing and motor patterns by taming chaos in recurrent neural networ",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "maksimov:2016",
+      "url": "github.com/ReScience-Archives/Maksimov-Albada-Diesmann-2016",
+      "title": "[Re] Cellular and network mechanisms of slow oscillatory activity (<1 Hz) and wa",
+      "domain": "Computational Neurosience",
+      "expected": null
+    },
+    {
+      "name": "lemasson:2016",
+      "url": "github.com/ReScience-Archives/Le_Masson-Alexandre-2016",
+      "title": "[Re] How Attention Can Create Synaptic Tags for the Learning of Working Memories",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    },
+    {
+      "name": "topalidou:2015",
+      "url": "github.com/ReScience-Archives/ReScience-Entry-Topalidou-Rougier-2015",
+      "title": "[Re] Interaction between cognitive and motor cortico-basal ganglia loops during ",
+      "domain": "Computational Neuroscience",
+      "expected": null
+    }
+  ]
+}
