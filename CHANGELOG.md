@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.8.0
+
+Reach: meet users at their actual moment of need, and fix the most common
+"it's a package nobody installed" failure.
+
+- **Run straight from a URL.** `repro-check github.com/owner/repo` (or a full
+  `https://` / `git@` URL) now shallow-clones the repo and runs the normal loop
+  against it — no manual clone/cd first. Clones use no stored credentials and
+  never block on an auth prompt; a private/missing repo, network error, or
+  timeout is reported cleanly (exit 1), not a crash. The result records
+  `cloned_from`.
+- **Install the repo as a package.** When the failing import is the repo's OWN
+  package and it ships `pyproject.toml` / `setup.py` / `setup.cfg`, repro-check
+  now runs `pip install -e . --no-deps` and re-runs, instead of handing off with
+  "package-structure fix needed". This closes the common
+  local-package-not-on-PyPI / package-structure / import-name-mismatch cluster.
+  `--no-deps` keeps it fast and memory-safe (third-party deps stay on the normal
+  install loop), behind the same pre-install memory gate.
+- New regression tests for URL detection/clone-failure and the editable-install
+  fix.
+
 ## v0.7.0
 
 First-run experience and robustness across all three languages.

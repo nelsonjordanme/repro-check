@@ -22,7 +22,8 @@ from . import engine as rk
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Make an old computational repo run again, or say exactly why it can't.")
-    ap.add_argument("target", help="path to the repo checkout")
+    ap.add_argument("target", help="path to the repo checkout, or a git repo URL "
+                    "(github.com/owner/repo, https://…, or git@…) to clone and run")
     ap.add_argument("--no-install", action="store_true",
                     help="do not pip-install missing declared dependencies")
     ap.add_argument("--max-iters", type=int, default=14,
@@ -31,16 +32,36 @@ def main(argv=None):
                     help="emit the full result as JSON instead of a human report")
     args = ap.parse_args(argv)
 
-    target = Path(args.target).expanduser().resolve()
-    if not target.is_dir():
-        ap.error(f"{target} is not a directory")
+    cloned_from = None
+    if rk.rc_looks_like_url(args.target):
+        target, info = rk.rc_clone_repo(args.target)
+        if target is None:
+            msg = {"status": "CLONE_FAILED", "target": args.target,
+                   "reason": info.get("error"), "kind": info.get("kind")}
+            if args.json:
+                print(json.dumps(msg, indent=2))
+            else:
+                print(f"✗ could not clone {args.target}")
+                print(f"  {info.get('kind')}: {info.get('error')}")
+                if info.get("kind") == "AUTH":
+                    print("  (private repo? this tool clones with no stored credentials)")
+            return 1
+        cloned_from = info["url"]
+    else:
+        target = Path(args.target).expanduser().resolve()
+        if not target.is_dir():
+            ap.error(f"{target} is not a directory")
 
     result = rk.attempt_executability(target, max_iters=args.max_iters,
                                       allow_install=not args.no_install)
+    if cloned_from:
+        result["cloned_from"] = cloned_from
 
     if args.json:
         print(json.dumps(result, indent=2))
     elif result["status"] in ("RAN", "RAN_AS_IS"):
+        if cloned_from:
+            print(f"cloned: {cloned_from}")
         print(f"✓ RUNS ({result['status']})  entry: {result.get('entrypoint')}")
         for p in result.get("patches", []):
             print(f"  fix: {p.get('change')}")

@@ -357,6 +357,61 @@ def notebook_to_script(nb_path, out_path=None):
     return out, order_info
 
 
+# --- Remote checkout ---------------------------------------------------------
+# A repo URL is the literal moment of need ("I found a paper's repo and it won't
+# run"). rc_looks_like_url + rc_clone_repo let the CLI accept a URL directly and
+# clone it to a temp dir before running the normal loop.
+
+GIT_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "codeberg.org",
+             "git.sr.ht", "gitee.com")
+
+
+def rc_looks_like_url(s):
+    """True if the target string is a remote repo URL (http(s):// or git@ SSH,
+    or a bare host/owner/repo on a known git host) rather than a local path."""
+    s = (s or "").strip()
+    if s.startswith(("http://", "https://", "git://", "ssh://", "git@")):
+        return True
+    # bare "github.com/owner/repo" without a scheme
+    return any(s.startswith(h + "/") for h in GIT_HOSTS)
+
+
+def rc_normalize_repo_url(s):
+    """Add a scheme to a bare host/owner/repo and strip a trailing slash so
+    `git clone` accepts it. Leaves scheme'd / SSH URLs untouched."""
+    s = (s or "").strip().rstrip("/")
+    if s.startswith("git@") or "://" in s:
+        return s
+    if any(s.startswith(h + "/") for h in GIT_HOSTS):
+        return "https://" + s
+    return s
+
+
+def rc_clone_repo(url, dest=None, depth=1, timeout=300):
+    """Shallow-clone a remote repo to a temp dir (or `dest`). Returns
+    (path, info) on success or (None, {"error": ...}) on failure. Never raises
+    — a clone failure is an honest, reportable outcome, not a crash. `git` must
+    be on PATH; a private repo without ambient credentials fails cleanly here."""
+    if shutil.which("git") is None:
+        return None, {"error": "git is not installed", "kind": "NO_GIT"}
+    url = rc_normalize_repo_url(url)
+    target = Path(dest) if dest else Path(tempfile.mkdtemp(prefix="reprocheck_clone_"))
+    if dest:
+        target.mkdir(parents=True, exist_ok=True)
+    cmd = ["git", "clone", "--depth", str(depth), "--quiet", url, str(target)]
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}  # never block on an auth prompt
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        return None, {"error": "git clone timed out after %ss" % timeout, "kind": "TIMEOUT"}
+    if r.returncode != 0:
+        err = (r.stderr or "").strip()
+        kind = "AUTH" if re.search(r"Authentication failed|could not read Username|"
+                                   r"Permission denied|repository .* not found", err, re.I) else "CLONE_FAILED"
+        return None, {"error": err[-500:] or "git clone failed", "kind": kind, "url": url}
+    return target, {"url": url, "depth": depth, "path": str(target)}
+
+
 # Files that signal a repo is NOT a runnable-Python project (so NO_ENTRYPOINT
 # should be reported honestly as "out of scope", not as a tool failure).
 def detect_scope(target_dir):
@@ -376,6 +431,44 @@ def detect_scope(target_dir):
     if r:
         return "r"
     return "no_python"
+
+
+def rc_find_package_root(target_dir):
+    """Return the directory holding installable packaging metadata
+    (pyproject.toml / setup.py / setup.cfg), searching the repo root first then
+    one level down (repos often nest the package under src/ or a subdir).
+    Returns a Path or None."""
+    target_dir = Path(target_dir)
+    names = ("pyproject.toml", "setup.py", "setup.cfg")
+    if any((target_dir / n).exists() for n in names):
+        return target_dir
+    for sub in sorted(p for p in target_dir.iterdir() if p.is_dir()):
+        if sub.name in (".git", "__pycache__", "tests", "test", "docs"):
+            continue
+        if any((sub / n).exists() for n in names):
+            return sub
+    return None
+
+
+def rc_pip_install_editable(pkg_root, timeout=300):
+    """`pip install -e . --no-deps` on a repo that ships packaging metadata, to
+    make its OWN package importable (the fix for LOCAL_PKG_NOT_ON_PYPI /
+    PKG_STRUCTURE / IMPORT_NAME_MISMATCH). --no-deps is deliberate: we only want
+    the local package on sys.path; its third-party deps stay handled by the
+    normal DEP_MISSING loop, and skipping them keeps this fast and memory-light.
+    Behind the same pre-install memory gate as pip_install. Returns
+    (ok, info_dict{log})."""
+    okgate, why = rc_preinstall_gate()
+    if not okgate:
+        return False, {"log": "SKIPPED_LOW_MEMORY: " + (why or "low memory")}
+    cmd = [sys.executable, "-m", "pip", "install", "-e", ".", "--no-deps", "-q"]
+    try:
+        r = subprocess.run(cmd, cwd=str(pkg_root), capture_output=True,
+                           text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, {"log": "TIMEOUT: editable install exceeded %ss" % timeout}
+    log = (r.stderr or "") + (r.stdout or "")
+    return r.returncode == 0, {"log": log[-500:]}
 
 
 def looks_local(module, target_dir):
@@ -539,6 +632,7 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
 
     patches, installed, attempts = [], [], []
     prev_err, tried_install = None, set()
+    tried_editable = False
     module_mode = None; module_root = None   # set when we recover via `python -m`
     for i in range(max_iters):
         r = run_script(ep, target_dir, as_module=module_mode, module_root=module_root)
@@ -579,6 +673,33 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
             # import is a package-structure problem for the agent, not a missing
             # dependency — and installing a local name risks pulling a lookalike.
             if looks_local(diag["module"], target_dir):
+                # The failing import is the repo's OWN package. Rather than
+                # pip-installing a lookalike from PyPI, if the repo ships
+                # packaging metadata try an editable install (`pip install -e .
+                # --no-deps`) to put its package on sys.path — this is the fix
+                # for the common "the analysis is a package nobody installed"
+                # case (LOCAL_PKG_NOT_ON_PYPI / PKG_STRUCTURE / IMPORT_NAME_MISMATCH).
+                pkg_root = rc_find_package_root(target_dir)
+                if pkg_root is not None and not tried_editable:
+                    tried_editable = True
+                    ok_e, info_e = rc_pip_install_editable(pkg_root)
+                    if ok_e:
+                        installed.append({"editable": str(Path(pkg_root).relative_to(target_dir) or "."),
+                                          "pkg": "(local package, -e --no-deps)"})
+                        prev_err = None
+                        continue
+                    log_e = info_e.get("log", "")
+                    if log_e.startswith("SKIPPED_LOW_MEMORY:"):
+                        reason_e = "editable install skipped — " + log_e.split(":", 1)[1].strip()
+                    elif log_e.startswith("TIMEOUT:"):
+                        reason_e = "editable install timed out — " + log_e.split(":", 1)[1].strip()
+                    else:
+                        reason_e = (f"'{top}' is the repo's own package but `pip install -e .` "
+                                    f"failed — package-structure fix needed")
+                    return build_handoff(target_dir, ep, patches, installed, attempts, diag=diag,
+                            reason=reason_e,
+                            traceback=(r["stderr"] or "") + "\n[editable install log] " + log_e,
+                            module_mode=module_mode)
                 return build_handoff(target_dir, ep, patches, installed, attempts, diag=diag,
                         reason=f"'{top}' is a local module (found in repo), not a PyPI dependency "
                                f"— install refused; package-structure fix needed",

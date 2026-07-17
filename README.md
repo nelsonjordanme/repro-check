@@ -18,12 +18,20 @@ takes reasoning, not a fixed script.
 ## Try it in 30 seconds
 
 ```bash
-pip install git+https://github.com/nelsonjordanme/repro-check.git
+pip install repro-check
 ```
 
-Point it at a repo checkout. The bundled fixture is a deliberately-broken
-analysis (a hardcoded absolute data path + a removed `np.float` API) — exactly
-the kind of rot that stops old code:
+Point it at a repo — a local checkout, or a git URL to clone and run in one
+step:
+
+```bash
+repro-check github.com/owner/repo        # clones, then runs
+repro-check path/to/checkout             # or a local path
+```
+
+The bundled fixture is a deliberately-broken analysis (a hardcoded absolute
+data path + a removed `np.float` API) — exactly the kind of rot that stops old
+code:
 
 **Before** — run the script the way the paper intended, and it dies:
 
@@ -147,6 +155,13 @@ method is correct (rung 3) or robust (rung 4). **Reproducible ≠ correct**: a
 running repo means it executes, not that the science is sound.
 
 ## Status
+
+v0.8 — **reach.** On [PyPI](https://pypi.org/project/repro-check/):
+`pip install repro-check`. Runs straight from a repo URL
+(`repro-check github.com/owner/repo` shallow-clones then runs). And when the
+failing import is the repo's own package, an editable install
+(`pip install -e . --no-deps`) is applied automatically — closing the common
+"it's a package nobody installed" failure.
 
 v0.7 — **first-run experience + robustness.** A "Try it in 30 seconds"
 before/after now leads the README, with a terminal cast in `demo/`. Three

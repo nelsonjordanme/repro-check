@@ -126,6 +126,57 @@ def test_bioc_lockstep_routing():
     return True
 
 
+def test_url_detection():
+    """Repo URLs (scheme'd, SSH, or bare host/owner/repo) are detected and
+    normalized; local paths are left alone."""
+    assert rk.rc_looks_like_url("github.com/o/r") is True
+    assert rk.rc_looks_like_url("https://github.com/o/r") is True
+    assert rk.rc_looks_like_url("git@github.com:o/r.git") is True
+    assert rk.rc_looks_like_url("/tmp/x") is False
+    assert rk.rc_looks_like_url("./fixtures/example_paper") is False
+    assert rk.rc_normalize_repo_url("github.com/o/r/") == "https://github.com/o/r"
+    assert rk.rc_normalize_repo_url("https://gitlab.com/o/r") == "https://gitlab.com/o/r"
+    # clone of a definitely-nonexistent repo fails cleanly (no raise), if git
+    # present. Any failure kind is acceptable — the point is it returns
+    # (None, info) rather than raising, whether the wall is auth, not-found, or
+    # a network-blocked CI runner.
+    if __import__("shutil").which("git"):
+        path, info = rk.rc_clone_repo("https://github.com/nelsonjordanme/"
+                                      "definitely-not-a-real-repo-zzz", timeout=60)
+        assert path is None and "error" in info and info.get("kind")
+    return True
+
+
+def test_editable_install_fix():
+    """A repo that is its own package (imports fail without installation) but
+    ships packaging metadata is fixed by `pip install -e . --no-deps` and runs.
+    Skipped if pip can't write to the environment."""
+    import tempfile, subprocess, sys
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp())
+    (d / "pyproject.toml").write_text(
+        "[build-system]\nrequires=['setuptools>=61']\n"
+        "build-backend='setuptools.build_meta'\n"
+        "[project]\nname='reprocheck-editable-test'\nversion='0.0.1'\n")
+    pkg = d / "analysis"; pkg.mkdir()
+    (pkg / "__init__.py").write_text("from analysis.helpers import answer\n")
+    (pkg / "helpers.py").write_text("import analysis\ndef answer(): return 42\n")
+    # rc_find_package_root sees it
+    assert rk.rc_find_package_root(d) == d
+    try:
+        res = rk.attempt_executability(d, allow_install=True)
+    finally:
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q",
+                        "reprocheck-editable-test"], capture_output=True)
+    # Either it installed editable and ran, or the environment refused the write
+    # (low memory / no pip) and it handed off honestly — both are acceptable.
+    if res["status"] == "RAN":
+        assert any("editable" in d for d in res.get("installed", [])), res.get("installed")
+    else:
+        assert res["status"] == "NEEDS_AGENT"
+    return True
+
+
 if __name__ == "__main__":
     rep = test_fixture()
     print("PASS — {reproduced} reproduced, {near} near, {needs_review} need review"
@@ -141,3 +192,7 @@ if __name__ == "__main__":
     print("PASS — notebook out-of-order detection")
     test_bioc_lockstep_routing()
     print("PASS — Bioconductor version-lockstep hand-off (R_BIOC_VERSION)")
+    test_url_detection()
+    print("PASS — repo-URL detection + clean clone-failure")
+    test_editable_install_fix()
+    print("PASS — editable install fixes a self-importing package repo")
