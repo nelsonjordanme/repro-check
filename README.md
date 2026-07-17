@@ -40,6 +40,18 @@ rot, removed APIs, environment quirks, and entry-point problems dominate — and
 fixing them is tedious, unrewarding, and only recently automatable, because it
 takes reasoning, not a fixed script.
 
+**Reproducible benchmark.** That original study did not record its corpus URLs,
+so `benchmark/rescience_manifest.json` ships a fresh, re-runnable corpus of 22
+Python replication repos taken from the ReScience journal bibliography. A full
+run on a build-capable machine (`benchmark/run_benchmark.py --clone`) measured
+**8/22 (36%) as-cloned → 10/22 (45%) after repro-check**, with every remaining
+repo given a diagnosed hand-off. Of the 12 hand-offs, most are a to-do list
+rather than dead ends: 5 are missing dependencies (install-resolvable on a
+machine with build tools), and the coverage fixes in v0.9.2 (Py2 `xrange`,
+skipping packaging files) convert more of them. Only one was a genuine code-logic
+bug correctly left to a human. Regenerate the table yourself — see
+`benchmark/README.md`.
+
 ## Try it in 30 seconds
 
 ```bash

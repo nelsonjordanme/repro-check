@@ -54,6 +54,17 @@ API_RENAMES = {
 # exist. Add a method here only after confirming np.<name>(arr, ...) works.
 NDARRAY_METHODS_REMOVED = {"ptp"}
 
+# Python-2 builtins removed in Python 3, each with a safe, behavior-preserving
+# Python-3 replacement. These surface at RUN time as a NameError (not a
+# SyntaxError), so they need name-level rewriting distinct from the print-fixer.
+# `xrange` -> `range` is exact under Py3 (range is already lazy). unicode/basestring
+# map to str; raw_input to input; unichr to chr. Applied only as whole-word token
+# replacements, never inside strings/comments (guarded in the fixer).
+PY2_BUILTINS = {
+    "xrange": "range", "unicode": "str", "basestring": "str",
+    "raw_input": "input", "unichr": "chr", "long": "int",
+}
+
 IMPORT_TO_PKG = {
     "yaml": "pyyaml", "cv2": "opencv-python", "sklearn": "scikit-learn",
     "PIL": "pillow", "skimage": "scikit-image", "pyDOE": "pyDOE2",
@@ -78,6 +89,13 @@ def classify_failure(stderr: str) -> dict:
         return {"pattern": "DEP_MISSING", "module": m.group(1), "line": last}
     m = re.search(r"name '(\w+)' is not defined", stderr)
     if m:
+        # A Py2 builtin that Python 3 removed (xrange, unicode, ...) surfaces as a
+        # NameError, not a SyntaxError. Distinguish it from a genuine
+        # use-before-definition (EXEC_ORDER) so the Py2 name fixer can handle it.
+        if m.group(1) in PY2_BUILTINS:
+            mf = re.search(r'File "([^"]+)", line', stderr)
+            return {"pattern": "PY2_NAME", "symbol": m.group(1),
+                    "file": (mf.group(1) if mf else None), "line": last}
         return {"pattern": "EXEC_ORDER", "symbol": m.group(1), "line": last}
     # numpy 2.0 removed several ndarray METHODS that still exist as np functions
     # (e.g. a.ptp() -> np.ptp(a)). Distinct from DEP_API_CHANGE (top-level aliases).
@@ -198,6 +216,44 @@ def apply_patch(src: str, diagnosis: dict, target_dir: Path):
         Path(tgt).write_text(fixed)   # patch the actual failing file in place
         return src, {"pattern": p, "change": f"Py2 print statements -> print() in {Path(tgt).name} ({n})",
                      "file": tgt, "side_effect": True}
+    if p == "PY2_NAME":
+        # A removed Py2 builtin (xrange, unicode, ...) used at run time. Rewrite it
+        # to the Py3 equivalent using tokenize, so ONLY real NAME tokens are
+        # touched — never occurrences inside strings or comments — and never an
+        # attribute access (`obj.xrange`). Compile-checked before writing.
+        import tokenize, io
+        tgt = diagnosis.get("file")
+        if not tgt or not Path(tgt).exists():
+            return None, "py2 name error but source file not locatable"
+        code = Path(tgt).read_text()
+        try:
+            toks = list(tokenize.generate_tokens(io.StringIO(code).readline))
+        except (tokenize.TokenError, IndentationError) as ex:
+            return None, f"could not tokenize source for Py2-name rewrite ({ex})"
+        out, n, prev = [], 0, None
+        for tok in toks:
+            ttype, tstr = tok.type, tok.string
+            if (ttype == tokenize.NAME and tstr in PY2_BUILTINS
+                    and not (prev and prev.type == tokenize.OP and prev.string == ".")):
+                out.append(tok._replace(string=PY2_BUILTINS[tstr])); n += 1
+            else:
+                out.append(tok)
+            if ttype not in (tokenize.NL, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT):
+                prev = tok
+        if n == 0:
+            return None, "no Py2 builtin names found to rewrite (hand to agent)"
+        try:
+            fixed = tokenize.untokenize(out)
+            compile(fixed, tgt, "exec")
+        except (SyntaxError, ValueError) as ex:
+            return None, f"Py2-name rewrite left invalid source ({ex}) — hand to agent"
+        Path(tgt).write_text(fixed)
+        names = sorted({t.string for t in toks
+                        if t.type == tokenize.NAME and t.string in PY2_BUILTINS})
+        return src, {"pattern": p,
+                     "change": "Py2 builtins -> Py3 (%s) in %s (%d)"
+                               % (", ".join(names), Path(tgt).name, n),
+                     "file": tgt, "side_effect": True}
     return None, f"pattern {p} has no automated repair (hand to agent)"
 
 
@@ -255,9 +311,15 @@ def discover_entrypoint(target_dir):
     most `if __name__ == '__main__'` / plotting signal. Returns a Path or None.
     """
     target_dir = Path(target_dir)
+    # Packaging/config scripts are NOT analysis entry points — running `setup.py`
+    # with no argument just prints "no commands supplied". A repo that ships one
+    # should be installed (the editable-install path handles that), then its real
+    # entry found. Excluding them here stops discovery from picking the wrong file.
+    SKIP_NAMES = {"setup.py", "conftest.py", "_version.py", "versioneer.py"}
     pys = [p for p in target_dir.rglob("*.py")
-           if not any(seg in {".git", "__pycache__", "article", "figures", "paper"}
-                      for seg in p.relative_to(target_dir).parts[:-1])]
+           if p.name not in SKIP_NAMES
+           and not any(seg in {".git", "__pycache__", "article", "figures", "paper"}
+                       for seg in p.relative_to(target_dir).parts[:-1])]
     if not pys:
         return None
 
@@ -422,7 +484,12 @@ def detect_scope(target_dir):
     td = Path(target_dir)
     def has(glob):
         return any(p for p in td.rglob(glob) if ".git" not in p.parts)
-    py = has("*.py"); ipynb = has("*.ipynb")
+    # A repo whose ONLY .py files are packaging/config scripts (setup.py etc.) has
+    # no runnable Python entry — so it should fall through to its notebook or R
+    # content, not be treated as a Python repo that then finds nothing to run.
+    _PKG_ONLY = {"setup.py", "conftest.py", "_version.py", "versioneer.py"}
+    py = any(p.name not in _PKG_ONLY for p in td.rglob("*.py") if ".git" not in p.parts)
+    ipynb = has("*.ipynb")
     r = has("*.R") or has("*.r") or has("*.Rmd") or has("*.rmd") or (td / "DESCRIPTION").exists()
     if py:
         return None

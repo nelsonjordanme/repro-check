@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.9.2
+
+Coverage wins found by running the benchmark on real ReScience Python repos:
+
+- **Py2 builtins fixed at run time.** `xrange`, `unicode`, `basestring`,
+  `raw_input`, `unichr`, `long` — used in Py2 code — now surface as a distinct
+  `PY2_NAME` pattern and are rewritten to their Py3 equivalents via a
+  tokenize-based pass (only real NAME tokens, never strings/comments/attributes),
+  compile-checked before writing. Converts viejo:2016 from hand-off to RUN.
+- **Packaging scripts are no longer mistaken for entry points.** `setup.py`,
+  `conftest.py`, `_version.py`, `versioneer.py` are skipped by entry discovery,
+  and a repo whose only `.py` is one of these now routes to its notebook / R
+  content instead of running the packaging file (which just printed "no commands
+  supplied"). Fixes stollmeier:2017 to give a meaningful notebook diagnosis.
+
 ## v0.9.1
 
 Bugfix (found during real-repo benchmark validation):

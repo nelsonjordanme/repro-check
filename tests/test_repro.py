@@ -247,6 +247,40 @@ def test_rung_reporting():
     return True
 
 
+def test_py2_name_fix():
+    """A removed Py2 builtin (xrange) used at run time is rewritten to its Py3
+    equivalent and the script then runs (found on ReScience repo viejo:2016)."""
+    import tempfile
+    from pathlib import Path
+    td = Path(tempfile.mkdtemp())
+    (td / "run.py").write_text("total = 0\nfor i in xrange(5):\n    total += i\nprint(total)\n")
+    res = rk.attempt_executability(td, allow_install=False, max_iters=4)
+    assert res["status"] == "RAN", res
+    assert any("xrange" in p.get("change", "") for p in res["patches"]), res["patches"]
+    # a NAME inside a string must NOT be rewritten
+    assert rk.classify_failure("NameError: name 'foo' is not defined")["pattern"] == "EXEC_ORDER"
+    assert rk.classify_failure(
+        'File "x.py", line 1\nNameError: name \'xrange\' is not defined')["pattern"] == "PY2_NAME"
+    return True
+
+
+def test_setup_py_only_routes_to_notebook():
+    """A repo whose ONLY .py is setup.py should not be run as an entry point;
+    if it ships a notebook, scope detection routes there (stollmeier:2017)."""
+    import tempfile, json as _json
+    from pathlib import Path
+    td = Path(tempfile.mkdtemp())
+    (td / "setup.py").write_text("from setuptools import setup\nsetup(name='x')\n")
+    nb = {"cells": [{"cell_type": "code", "execution_count": 1,
+                     "source": "print(1)\n", "outputs": [], "metadata": {}}],
+          "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+    (td / "analysis.ipynb").write_text(_json.dumps(nb))
+    assert rk.detect_scope(td) == "notebook", rk.detect_scope(td)
+    # discover_entrypoint must not pick setup.py
+    assert rk.discover_entrypoint(td) is None
+    return True
+
+
 def test_silent_nonzero_exit():
     """A script that exits nonzero but prints NOTHING to stderr must hand off
     cleanly, not crash on an empty splitlines()[-1] (regression: found on a real
@@ -310,6 +344,10 @@ if __name__ == "__main__":
     print("PASS — declared-env install + flagged pin relaxation")
     test_rung_reporting()
     print("PASS — explicit reproduction-rung reporting")
+    test_py2_name_fix()
+    print("PASS — Py2 builtin (xrange) rewritten to Py3, script runs")
+    test_setup_py_only_routes_to_notebook()
+    print("PASS — setup.py-only repo routes to notebook, not run as entry")
     test_silent_nonzero_exit()
     print("PASS — silent nonzero-exit hands off cleanly (no empty-stderr crash)")
     test_benchmark_harness()
