@@ -40,13 +40,26 @@ repositories, taken from the ReScience journal bibliography
 `github.com/ReScience/rescience.github.io/_bibliography/published.bib`).
 
 ```bash
-python benchmark/run_benchmark.py --manifest benchmark/rescience_manifest.json --clone
+python benchmark/run_benchmark.py --manifest benchmark/rescience_manifest.json --clone --isolate
 ```
 
 This clones and evaluates every repo, so it needs **network, disk, and build
 tools** — heavy scientific installs (neuroscience simulators, etc.) require real
 RAM and cannot run in a memory-constrained sandbox. Run it on a laptop, VM, or
 CI runner with a few GB free.
+
+**Always pass `--isolate` for numbers you intend to quote.** Without it, every
+repo shares one Python environment, so a dependency installed for one repo stays
+present and makes later repos' *as-cloned* baseline pass without a fix — the
+"as-cloned" count inflates as installs accumulate (this actually happened: a
+shared-venv run drifted from 8 to 11 as-cloned purely from leaked packages).
+`--isolate` evaluates each repo in its own throwaway venv (created with
+`--system-site-packages`, so the 2026 scientific base resolves without being
+reinstalled 22 times, but each repo's *new* installs are discarded afterwards),
+so the baseline is a true fixed property of the repo. It is slower — one venv per
+repo — but it is the only trustworthy setting. Without `--isolate` the harness
+still works and never mutates the corpus, but cross-repo as-cloned counts are not
+reliable.
 
 Notes on the corpus:
 

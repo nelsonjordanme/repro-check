@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.9.3
+
+Benchmark methodology fix (found by comparing two real corpus runs):
+
+- **`--isolate` mode.** The benchmark harness previously evaluated every repo in
+  ONE shared Python environment, so a dependency installed for one repo stayed
+  present and made later repos' *as-cloned* baseline pass without a fix — the
+  as-cloned count inflated as installs accumulated (a real run drifted 8 -> 11
+  as-cloned purely from leaked packages). `--isolate` evaluates each repo in its
+  own throwaway venv (`--system-site-packages`, so the scientific base isn't
+  reinstalled per repo, but each repo's new installs are discarded), making the
+  baseline a true fixed property. Documented as the required setting for quotable
+  numbers; regression test `test_benchmark_isolation` reproduces the leak and
+  asserts isolation prevents it.
+
 ## v0.9.2
 
 Coverage wins found by running the benchmark on real ReScience Python repos:

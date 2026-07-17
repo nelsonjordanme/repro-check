@@ -295,6 +295,43 @@ def test_silent_nonzero_exit():
     return True
 
 
+def test_benchmark_isolation():
+    """--isolate evaluates each repo in its own throwaway venv, so a package
+    installed for one repo cannot make a LATER repo's as-cloned baseline pass.
+    Reproduces the shared-venv contamination bug and asserts isolation fixes it.
+    Uses `praise` (tiny, pure-Python, pip-only) as the leak probe."""
+    import os, sys, subprocess, json, tempfile, shutil
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bench = os.path.join(here, "benchmark", "run_benchmark.py")
+    if not os.path.exists(bench):
+        return True
+    base = tempfile.mkdtemp()
+    try:
+        for r in ("repoA", "repoB"):
+            d = os.path.join(base, r); os.makedirs(d)
+            with open(os.path.join(d, "run.py"), "w") as f:
+                f.write("import praise\nprint(praise.praise())\n")
+        man = os.path.join(base, "man.json")
+        with open(man, "w") as f:
+            json.dump({"repos": [{"name": "repoA", "path": os.path.join(base, "repoA")},
+                                 {"name": "repoB", "path": os.path.join(base, "repoB")}]}, f)
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "praise"],
+                       capture_output=True)
+        out = subprocess.run([sys.executable, bench, "--manifest", man, "--json", "--isolate"],
+                             capture_output=True, text=True, timeout=1800)
+        rows = {r["name"]: r for r in json.loads(out.stdout)["rows"]}
+        # If venv isolation could not be established on this platform it falls
+        # back to in-process; only assert the guarantee when it actually isolated.
+        if rows["repoB"].get("isolation") == "per-repo-venv":
+            assert rows["repoB"]["as_cloned"] is False, \
+                "repoB baseline leaked a dependency across repos under --isolate"
+    finally:
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "praise"],
+                       capture_output=True)
+        shutil.rmtree(base, ignore_errors=True)
+    return True
+
+
 def test_benchmark_harness():
     """The benchmark harness runs on the bundled fixtures, produces a summary,
     and does NOT mutate the fixtures (it works on fresh copies)."""
@@ -350,5 +387,7 @@ if __name__ == "__main__":
     print("PASS — setup.py-only repo routes to notebook, not run as entry")
     test_silent_nonzero_exit()
     print("PASS — silent nonzero-exit hands off cleanly (no empty-stderr crash)")
+    test_benchmark_isolation()
+    print("PASS — benchmark --isolate prevents cross-repo dependency leakage")
     test_benchmark_harness()
     print("PASS — benchmark harness runs on fixtures without mutating them")

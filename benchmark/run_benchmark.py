@@ -53,7 +53,59 @@ def _repro_check(path):
     return rk.attempt_executability(Path(path), allow_install=True)
 
 
-def run(manifest, do_clone=False):
+def _eval_one(path):
+    """Baseline + fix pass for ONE repo, each on its own fresh copy. Returns the
+    row fields that depend on running the engine. Kept separate so it can run
+    either in-process or inside an isolated per-repo interpreter (the worker)."""
+    base_copy = _fresh_copy(path)
+    fix_copy = _fresh_copy(path)
+    try:
+        baseline = _baseline_runs(base_copy)
+        res = _repro_check(fix_copy)
+    finally:
+        shutil.rmtree(base_copy.parent, ignore_errors=True)
+        shutil.rmtree(fix_copy.parent, ignore_errors=True)
+    return {"as_cloned": bool(baseline), "status": res["status"],
+            "n_fixes": (len(res.get("patches", [])) + len(res.get("installed", []))
+                        + (1 if res.get("from_notebook") else 0))}
+
+
+def _eval_one_isolated(path):
+    """Evaluate a repo in its OWN throwaway virtualenv so any packages the fix
+    pass installs cannot leak into another repo's baseline (the cross-repo
+    contamination that inflated the shared-venv numbers). The venv is created
+    with --system-site-packages so repro-check and the heavy scientific base
+    (numpy/pandas/scipy) resolve from the current interpreter WITHOUT being
+    reinstalled 22 times; only the repo's own new installs land in the venv, and
+    the whole venv is deleted afterwards. Baseline therefore sees the 2026
+    scientific stack (consistent with the ReScience study environment) but never
+    another repo's dependencies. Falls back to in-process on venv failure."""
+    venv_dir = Path(tempfile.mkdtemp(prefix="reprobench_venv_"))
+    try:
+        rc = subprocess.run([sys.executable, "-m", "venv", "--system-site-packages",
+                             str(venv_dir)], capture_output=True, text=True)
+        if rc.returncode != 0:
+            return {**_eval_one(path), "_isolation": "failed-fell-back-in-process"}
+        vpy = venv_dir / "bin" / "python"
+        if not vpy.exists():  # Windows layout
+            vpy = venv_dir / "Scripts" / "python.exe"
+        worker = subprocess.run(
+            [str(vpy), str(HERE / "run_benchmark.py"), "--_worker", str(path)],
+            capture_output=True, text=True, timeout=1800)
+        out = worker.stdout.strip()
+        if worker.returncode != 0 or not out:
+            return {**_eval_one(path), "_isolation": "worker-error-fell-back",
+                    "_worker_err": (worker.stderr or "")[-200:]}
+        row = json.loads(out.splitlines()[-1])
+        row["_isolation"] = "per-repo-venv"
+        return row
+    except Exception as ex:
+        return {**_eval_one(path), "_isolation": "exc-fell-back: %s" % type(ex).__name__}
+    finally:
+        shutil.rmtree(venv_dir, ignore_errors=True)
+
+
+def run(manifest, do_clone=False, isolate=False):
     from repro_check import engine as rk
     rows = []
     for entry in manifest:
@@ -77,23 +129,19 @@ def run(manifest, do_clone=False):
         t0 = time.time()
         # Each measurement runs on its OWN fresh copy — repro-check patches
         # files in place, so reusing a dir would let the fix pass contaminate
-        # the baseline (and mutate the corpus). Baseline and fix pass get
-        # separate clean copies.
-        base_copy = _fresh_copy(p)
-        fix_copy = _fresh_copy(p)
-        try:
-            baseline = _baseline_runs(base_copy)
-            res = _repro_check(fix_copy)
-        finally:
-            shutil.rmtree(base_copy.parent, ignore_errors=True)
-            shutil.rmtree(fix_copy.parent, ignore_errors=True)
-        rows.append({"name": name,
-                     "as_cloned": bool(baseline),
-                     "status": res["status"],
-                     "expected": entry.get("expected"),
-                     "n_fixes": (len(res.get("patches", [])) + len(res.get("installed", []))
-                                 + (1 if res.get("from_notebook") else 0)),
-                     "secs": round(time.time() - t0, 1)})
+        # the baseline (and mutate the corpus). With --isolate, the whole
+        # baseline+fix evaluation also runs in a throwaway per-repo venv so one
+        # repo's installs can't leak into the NEXT repo's baseline.
+        r = _eval_one_isolated(p) if isolate else _eval_one(p)
+        row = {"name": name,
+               "as_cloned": r["as_cloned"],
+               "status": r["status"],
+               "expected": entry.get("expected"),
+               "n_fixes": r["n_fixes"],
+               "secs": round(time.time() - t0, 1)}
+        if "_isolation" in r:
+            row["isolation"] = r["_isolation"]
+        rows.append(row)
     return rows
 
 
@@ -135,13 +183,28 @@ def main(argv=None):
                     help="path to a corpus manifest JSON (default: bundled fixtures)")
     ap.add_argument("--clone", action="store_true", help="clone URL entries (network+disk)")
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    ap.add_argument("--isolate", action="store_true",
+                    help="evaluate each repo in its own throwaway venv so one "
+                         "repo's installs can't contaminate another's baseline "
+                         "(slower; the trustworthy setting for real numbers)")
+    ap.add_argument("--_worker", metavar="PATH", default=None,
+                    help=argparse.SUPPRESS)  # internal: eval ONE repo, print JSON row
     args = ap.parse_args(argv)
+    if args._worker:  # isolated per-repo worker: evaluate one repo, emit its row
+        # A --system-site-packages venv inherits pip-INSTALLED packages, but an
+        # EDITABLE install (repro-check dev tree) links via a .pth that a child
+        # venv may not pick up. Make the package importable from the repo root so
+        # the worker uses the SAME engine code as the parent, installed or not.
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        print(json.dumps(_eval_one(args._worker)))
+        return 0
     manifest = json.loads(Path(args.manifest).read_text())
     # Accept either a bare list, or a {"repos": [...]} wrapper carrying metadata
     # (_about/_source/_count) alongside the repo list.
     if isinstance(manifest, dict):
         manifest = manifest.get("repos", [])
-    rows = run(manifest, do_clone=args.clone)
+    rows = run(manifest, do_clone=args.clone, isolate=args.isolate)
     summary = summarize(rows)
     if args.json:
         print(json.dumps({"rows": rows, "summary": summary}, indent=2))
