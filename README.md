@@ -31,11 +31,11 @@ repro-check github.com/owner/repo
 run again, and when it can't, hands back exactly where it stopped and what to do
 next.** An agent loads it; it is not a standalone app and not a pass/fail judge.
 
-Most published analysis code does not re-run. In a study bundled with this repo
-(`RUNNABILITY_STUDY.json`), of 43 ReScience-C Python repositories only
-**28% ran to completion as-cloned** under a 2026 environment; verified mechanical
-repair raised that to **37%** (a further 9% rescued); the remaining **63%** needed
-case-by-case reasoning. Dependency
+Most published analysis code does not re-run. In an earlier study bundled with
+this repo (`RUNNABILITY_STUDY.json`), of 45 ReScience-C Python repositories cloned
+(43 evaluable, 2 dead links) only **28% ran to completion as-cloned** under a 2026
+environment; verified mechanical repair raised that to **37%** (a further 9%
+rescued); the remaining **63%** needed case-by-case reasoning. Dependency
 rot, removed APIs, environment quirks, and entry-point problems dominate — and
 fixing them is tedious, unrewarding, and only recently automatable, because it
 takes reasoning, not a fixed script.
@@ -192,6 +192,17 @@ method is correct (rung 3) or robust (rung 4). **Reproducible ≠ correct**: a
 running repo means it executes, not that the science is sound.
 
 ## Status
+
+v0.9.2 — **coverage wins from the real-repo benchmark.** Running the reproducible
+ReScience corpus surfaced two gaps, now fixed: Python-2 builtins used at run time
+(`xrange`, `unicode`, `basestring`, `raw_input`, `unichr`, `long`) are rewritten to
+their Py3 equivalents via a token-level pass (`PY2_NAME`); and packaging scripts
+(`setup.py` etc.) are no longer mistaken for entry points — a repo whose only `.py`
+is packaging routes to its notebook / R content instead.
+
+v0.9.1 — **crash fix.** A script that exits nonzero but prints nothing to stderr
+no longer crashes the engine; it hands off cleanly. Found during real-repo
+benchmark validation.
 
 v0.9 — **coverage + trust.** Installs the repo's DECLARED environment
 (`requirements.txt`) before guessing deps one import at a time; a stale exact
