@@ -2,6 +2,31 @@
 
 [![self-test](https://github.com/nelsonjordanme/repro-check/actions/workflows/selftest.yml/badge.svg)](https://github.com/nelsonjordanme/repro-check/actions/workflows/selftest.yml)
 
+## What is this?
+
+Old research code often stops working. You download the analysis from a paper,
+try to run it, and it crashes — a file path that no longer exists, a package
+that changed, a dependency nobody installed.
+
+**repro-check is a mechanic for that code.** Point it at a repository and it
+finds the script (Python, R, or a Jupyter notebook), tries to run it, and
+applies known fixes when it breaks — repeating until one of two things is true:
+
+- ✅ **it runs** — and you get a list of exactly what was changed, or
+- ✋ **it stops and hands off** — telling you precisely where it got stuck and
+  what a human needs to do next.
+
+The one thing it will never do is pretend. A green result means *the code runs*
+— **not** that the results are scientifically correct. That harder question is
+left to you, on purpose. (More on this below under "The reproduction ladder".)
+
+```bash
+pip install repro-check
+repro-check github.com/owner/repo
+```
+
+---
+
 **A runnability scaffold for reproducing computational papers: it makes old code
 run again, and when it can't, hands back exactly where it stopped and what to do
 next.** An agent loads it; it is not a standalone app and not a pass/fail judge.
