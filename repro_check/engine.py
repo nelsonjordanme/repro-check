@@ -276,6 +276,65 @@ def discover_entrypoint(target_dir):
     return sorted(pys, key=score)[0]
 
 
+def notebook_to_script(nb_path, out_path=None):
+    """Convert a Jupyter notebook's code cells to a runnable .py file, reusing the
+    whole existing run/diagnose/fix loop instead of a parallel notebook executor.
+
+    IPython-only constructs are neutralised so the result is plain-Python:
+      - line magics (`%matplotlib inline`)      -> commented out
+      - cell magics (`%%time`)                   -> whole cell's magic line dropped
+      - shell escapes (`!pip install x`)         -> commented out
+      - `display(...)` / `get_ipython()`         -> commented out
+    Returns the written Path, or None if the notebook has no code or nbformat is
+    unavailable (caller falls back to NO_ENTRYPOINT).
+    """
+    try:
+        import nbformat
+    except Exception:
+        return None
+    try:
+        nb = nbformat.read(str(nb_path), as_version=4)
+    except Exception:
+        return None
+    lines = []
+    for cell in nb.cells:
+        if cell.get("cell_type") != "code":
+            continue
+        for ln in (cell.get("source") or "").splitlines():
+            s = ln.lstrip()
+            if s.startswith(("%", "!", "get_ipython(")) or s.startswith("display("):
+                lines.append("# [repro-check: notebook-only] " + ln)
+            else:
+                lines.append(ln)
+        lines.append("")  # cell boundary
+    if not any(l.strip() and not l.startswith("#") for l in lines):
+        return None
+    out = Path(out_path) if out_path else Path(nb_path).with_suffix(".repro_nb.py")
+    out.write_text("\n".join(lines) + "\n")
+    return out
+
+
+# Files that signal a repo is NOT a runnable-Python project (so NO_ENTRYPOINT
+# should be reported honestly as "out of scope", not as a tool failure).
+def detect_scope(target_dir):
+    """Classify a repo with no Python entry point, so the hand-off can say WHY.
+    Returns one of: 'notebook' (has .ipynb, convertible), 'r' (R project),
+    'no_python' (no .py/.ipynb at all), or None (has .py — not this branch's job).
+    """
+    td = Path(target_dir)
+    def has(glob):
+        return any(p for p in td.rglob(glob) if ".git" not in p.parts)
+    py = has("*.py"); ipynb = has("*.ipynb")
+    r = has("*.R") or has("*.r") or (td / "DESCRIPTION").exists()
+    if py:
+        return None
+    if ipynb:
+        return "notebook"
+    if r:
+        return "r"
+    return "no_python"
+
+
 def looks_local(module, target_dir):
     """True if `module` is the repo's OWN code (a sibling .py file or package
     dir under target_dir), not a third-party dependency. Such modules must NOT
@@ -315,8 +374,28 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
     """
     target_dir = Path(target_dir).resolve()
     ep = discover_entrypoint(target_dir)
+    notebook_converted = None
     if ep is None:
-        return {"status": "NO_ENTRYPOINT", "target": str(target_dir)}
+        # No .py entry point. Before giving up, see what kind of repo this is.
+        scope = detect_scope(target_dir)
+        if scope == "notebook":
+            # Convert the most substantial notebook to a script and run THAT
+            # through the normal loop — notebooks are ~a third of no-entry repos.
+            nbs = sorted((p for p in target_dir.rglob("*.ipynb") if ".git" not in p.parts),
+                         key=lambda p: p.stat().st_size, reverse=True)
+            for nb in nbs:
+                converted = notebook_to_script(nb, nb.with_suffix(".repro_nb.py"))
+                if converted:
+                    ep = converted; notebook_converted = str(nb.relative_to(target_dir)); break
+        if ep is None:
+            reason = {
+                "notebook": "repo is notebook-based but no notebook could be converted to a runnable script",
+                "r": "this is an R project (no Python entry point) — out of scope for a Python runnability tool",
+                "no_python": "no Python or notebook files found — nothing for this tool to run",
+                None: "no runnable Python entry point found",
+            }.get(scope, "no runnable Python entry point found")
+            return {"status": "NO_ENTRYPOINT", "target": str(target_dir),
+                    "scope": scope, "reason": reason}
 
     patches, installed, attempts = [], [], []
     prev_err, tried_install = None, set()
@@ -327,10 +406,11 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
         attempts.append({"iter": i, "returncode": r["returncode"], "error": err_line,
                          **({"mode": f"-m {module_mode}"} if module_mode else {})})
         if r["returncode"] == 0:
-            return {"status": "RAN" if (patches or installed) else "RAN_AS_IS",
+            return {"status": "RAN" if (patches or installed or notebook_converted) else "RAN_AS_IS",
                     "entrypoint": str(ep.relative_to(target_dir)),
                     "patches": patches, "installed": installed, "attempts": attempts,
-                    **({"run_as_module": module_mode} if module_mode else {})}
+                    **({"run_as_module": module_mode} if module_mode else {}),
+                    **({"from_notebook": notebook_converted} if notebook_converted else {})}
 
         diag = classify_failure(r["stderr"])
 

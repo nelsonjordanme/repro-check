@@ -89,6 +89,20 @@ running repo means it executes, not that the science is sound.
 
 ## Status
 
+v0.5 — widened what counts as a runnable repo, driven by a 200-repo biomedical
+sample where a quarter of repos had no `.py` entry point the tool could find:
+
+- **Jupyter notebook support.** When a repo has no script but has notebooks, the
+  largest notebook is converted to a runnable script (IPython magics and shell
+  escapes neutralised) and run through the same fix loop — turning ~a third of
+  the previously-dead "no entry point" bucket into real runs or real diagnoses.
+- **Scope-aware verdicts.** A repo with no Python at all no longer returns a bare
+  "NO_ENTRYPOINT". It says *why*: an R project, a data-only repo, or
+  notebook-based — an honest out-of-scope answer instead of a misleading failure.
+
+v0.4 / v0.4.1 — reject README placeholder lines as CLI suggestions; fix
+multi-line Python-2 `print` conversion and expose applied patches in the hand-off.
+
 v0.3 — deepened the two hand-off / repair paths that matter most on real repos:
 
 - **Concrete run-time-argument hand-off.** When a repo runs but exits demanding
