@@ -1,0 +1,17 @@
+[
+  {
+    "name": "example_paper (broken py)",
+    "path": "fixtures/example_paper",
+    "expected": "RAN"
+  },
+  {
+    "name": "example_r_paper (clean R)",
+    "path": "fixtures/example_r_paper",
+    "expected": "RAN_AS_IS"
+  },
+  {
+    "name": "example_notebook (out-of-order)",
+    "path": "fixtures/example_notebook",
+    "expected": "RAN"
+  }
+]

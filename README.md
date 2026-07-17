@@ -156,6 +156,14 @@ running repo means it executes, not that the science is sound.
 
 ## Status
 
+v0.9 — **coverage + trust.** Installs the repo's DECLARED environment
+(`requirements.txt`) before guessing deps one import at a time; a stale exact
+pin is relaxed to a floor as a *flagged* fix (`PIN_RELAXED`, "may change
+results"). Every green result now states its **reproduction rung** — certifies
+rung 1 (it runs), does NOT verify scientific correctness (rung 2+). And
+`benchmark/run_benchmark.py` regenerates the runnability table across a corpus
+so the quoted percentages are auditable and re-runnable.
+
 v0.8 — **reach.** On [PyPI](https://pypi.org/project/repro-check/):
 `pip install repro-check`. Runs straight from a repo URL
 (`repro-check github.com/owner/repo` shallow-clones then runs). And when the

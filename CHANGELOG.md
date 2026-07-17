@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.9.0
+
+Coverage + trust: install what the repo declares, be explicit about what a
+green result means, and make the runnability numbers reproducible.
+
+- **Install the declared environment first.** When a third-party import is
+  missing, repro-check now installs the repo's declared dependencies
+  (`requirements.txt`) in one shot before falling back to discovering them one
+  failed import at a time. Faster and more faithful to what the authors
+  specified.
+- **Flagged version-pin relaxation.** A stale exact pin (`numpy==1.16.2`) that
+  no longer resolves on a modern interpreter is relaxed to a floor
+  (`numpy>=1.16.2`) and re-tried — recorded as a `PIN_RELAXED` patch flagged
+  "may change results", because loosening a version is a migration, not a
+  silent fix.
+- **Explicit reproduction-rung reporting.** A `RAN`/`RAN_AS_IS` result now says
+  exactly what it certifies: rung 1 (it runs to completion) — and what it does
+  NOT (numeric/scientific correctness, rung 2+). The tool's honesty contract,
+  stated in its own output rather than buried in the docs.
+- **Re-runnable benchmark harness.** `benchmark/run_benchmark.py` regenerates
+  the runnability table (as-cloned vs after-fixes) across a corpus manifest, so
+  the quoted percentages are auditable, not a static claim. Runs each repo on
+  fresh copies so it never mutates the corpus; ships with a bundled-fixtures
+  manifest and a ReScience-C stub for a build-capable machine.
+- New regression tests + fixtures for each change.
+
 ## v0.8.0
 
 Reach: meet users at their actual moment of need, and fix the most common

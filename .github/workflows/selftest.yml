@@ -35,3 +35,5 @@ jobs:
         run: |
           cp -r fixtures/example_notebook /tmp/nbpaper
           python -m repro_check /tmp/nbpaper
+      - name: regenerate the runnability table (benchmark harness)
+        run: python benchmark/run_benchmark.py

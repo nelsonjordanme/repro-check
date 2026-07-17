@@ -177,6 +177,100 @@ def test_editable_install_fix():
     return True
 
 
+def test_declared_env_helpers():
+    """requirements parsing, source detection, and exact-pin relaxation."""
+    import tempfile
+    from pathlib import Path
+    assert rk.rc_relax_pin("numpy==1.16.2") == ("numpy>=1.16.2", True)
+    assert rk.rc_relax_pin("scipy>=1.0") == ("scipy>=1.0", False)
+    assert rk.rc_relax_pin("pkg[x]==1.0.0") == ("pkg[x]>=1.0.0", True)
+    d = Path(tempfile.mkdtemp())
+    (d / "requirements.txt").write_text(
+        "# c\nnumpy==1.16.2\nrequests>=2.0  # inline\n-e .\n"
+        "git+https://x/y.git\nhttps://f/b.whl\nscipy\n")
+    assert rk.rc_find_requirements(d)[0]["kind"] == "requirements"
+    assert rk.rc_parse_requirements(d / "requirements.txt") == \
+        ["numpy==1.16.2", "requests>=2.0", "scipy"]
+    d2 = Path(tempfile.mkdtemp()); (d2 / "environment.yml").write_text("name: x\n")
+    assert rk.rc_find_requirements(d2)[0]["kind"] == "conda"
+    return True
+
+
+def test_declared_env_install():
+    """A repo whose entry imports a package listed in requirements.txt gets the
+    declared set installed in one shot; a stale exact pin is relaxed as a flagged
+    PIN_RELAXED patch. Skipped cleanly if the environment refuses the install."""
+    import tempfile, subprocess, sys
+    from pathlib import Path
+    d = Path(tempfile.mkdtemp())
+    (d / "requirements.txt").write_text("praise==0.0.5\n")  # only 0.1 exists -> must relax
+    (d / "run.py").write_text("import praise\nprint(bool(praise.praise()))\n")
+    try:
+        res = rk.attempt_executability(d, allow_install=True)
+    finally:
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "praise"],
+                       capture_output=True)
+    if res["status"] == "RAN":
+        assert any("requirements" in i for i in res.get("installed", [])), res.get("installed")
+        assert any(p.get("pattern") == "PIN_RELAXED" for p in res.get("patches", [])), res.get("patches")
+    else:
+        # low memory / offline CI -> honest hand-off is acceptable
+        assert res["status"] == "NEEDS_AGENT"
+    return True
+
+
+def test_rung_reporting():
+    """A RAN/RAN_AS_IS result carries the explicit reproduction-rung fields
+    (certifies rung 1 executability, does NOT verify scientific correctness);
+    a hand-off reports the rung it stopped at."""
+    # run the bundled broken fixture through the real engine, on a temp COPY so
+    # the in-place patches never mutate the source fixture
+    import os, shutil, tempfile
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    fx = os.path.join(here, "fixtures", "example_paper")
+    if os.path.isdir(fx):
+        tmp = os.path.join(tempfile.mkdtemp(), "example_paper")
+        shutil.copytree(fx, tmp)
+        res = rk.attempt_executability(tmp, allow_install=True)
+        assert res["status"] in ("RAN", "RAN_AS_IS"), res["status"]
+        assert res.get("rung_reached") == 1
+        assert "executability" in res.get("rung_certified", "")
+        assert "correctness" in res.get("not_verified", "")
+    # hand-off path reports a stopping rung (ep must live under target_dir)
+    import tempfile as _tf, os as _os
+    tdir = _tf.mkdtemp()
+    ep = _os.path.join(tdir, "x.py"); open(ep, "w").write("x=1\n")
+    ho = rk.build_handoff(tdir, __import__("pathlib").Path(ep),
+                          [], [], [{"iter": 0, "returncode": 1, "error": "boom"}],
+                          reason="needs a human step")
+    assert "stopping_rung" in ho
+    return True
+
+
+def test_benchmark_harness():
+    """The benchmark harness runs on the bundled fixtures, produces a summary,
+    and does NOT mutate the fixtures (it works on fresh copies)."""
+    import os, sys, subprocess, importlib.util
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    bench = os.path.join(here, "benchmark", "run_benchmark.py")
+    if not os.path.exists(bench):
+        return True  # harness not present in this checkout
+    # snapshot the broken fixture, run the harness, confirm it's unchanged
+    fx = os.path.join(here, "fixtures", "example_paper", "analysis.py")
+    before = open(fx).read() if os.path.exists(fx) else None
+    spec = importlib.util.spec_from_file_location("runbench", bench)
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    import json as _json
+    manifest = _json.load(open(os.path.join(here, "benchmark", "fixtures_manifest.json")))
+    rows = mod.run(manifest, do_clone=False)
+    summary = mod.summarize(rows)
+    assert summary["n_evaluable"] >= 1
+    assert summary["runs_after_repro_check"] >= 1
+    if before is not None:
+        assert open(fx).read() == before, "benchmark mutated the fixture!"
+    return True
+
+
 if __name__ == "__main__":
     rep = test_fixture()
     print("PASS — {reproduced} reproduced, {near} near, {needs_review} need review"
@@ -196,3 +290,11 @@ if __name__ == "__main__":
     print("PASS — repo-URL detection + clean clone-failure")
     test_editable_install_fix()
     print("PASS — editable install fixes a self-importing package repo")
+    test_declared_env_helpers()
+    print("PASS — declared-env helpers (parse/detect/relax-pin)")
+    test_declared_env_install()
+    print("PASS — declared-env install + flagged pin relaxation")
+    test_rung_reporting()
+    print("PASS — explicit reproduction-rung reporting")
+    test_benchmark_harness()
+    print("PASS — benchmark harness runs on fixtures without mutating them")

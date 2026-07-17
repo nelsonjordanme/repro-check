@@ -582,6 +582,111 @@ def pip_install(module, timeout=300):
     return r.returncode == 0, pkg, (r.stderr or r.stdout).strip()[-300:]
 
 
+# --- Declared-environment install -------------------------------------------
+# Many repos run the moment their DECLARED dependencies are present. Installing
+# the whole declared set up front is both faster and more faithful than the
+# import-by-import fallback (which only discovers a dep when an import fails).
+# The hard sub-problem is stale EXACT pins (numpy==1.16.2) that won't build on a
+# modern interpreter; we relax those to a floor as a FLAGGED fix, because
+# loosening a version can change results and must still re-pass rung-1.
+
+def rc_find_requirements(target_dir):
+    """Return a list of declared-dependency sources in the repo, most-preferred
+    first: a root requirements.txt, then environment.yml/.yaml, then a
+    pyproject/setup declaring dependencies. Each entry is
+    {"kind": "requirements"|"conda"|"pyproject", "path": Path}."""
+    target_dir = Path(target_dir)
+    found = []
+    for name in ("requirements.txt", "requirements.in"):
+        p = target_dir / name
+        if p.exists():
+            found.append({"kind": "requirements", "path": p})
+            break
+    for name in ("environment.yml", "environment.yaml"):
+        p = target_dir / name
+        if p.exists():
+            found.append({"kind": "conda", "path": p})
+            break
+    for name in ("pyproject.toml", "setup.cfg"):
+        p = target_dir / name
+        if p.exists():
+            found.append({"kind": "pyproject", "path": p})
+            break
+    return found
+
+
+def rc_parse_requirements(path):
+    """Parse a requirements.txt into a list of raw specifier lines, dropping
+    comments, blank lines, -r/-e/--flag lines, and VCS/URL installs (which we
+    leave to the normal loop). Returns [str]."""
+    reqs = []
+    for line in Path(path).read_text().splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or s.startswith("-"):
+            continue
+        if "://" in s or s.startswith(("git+", "http")):
+            continue
+        reqs.append(s.split("#", 1)[0].strip())
+    return [r for r in reqs if r]
+
+
+def rc_relax_pin(spec):
+    """Relax an exact pin (`pkg==1.2.3`) to a floor (`pkg>=1.2.3`) so a stale
+    version that no longer builds on a modern interpreter can resolve. Returns
+    (relaxed_spec, changed_bool). Non-exact specifiers pass through unchanged."""
+    m = re.match(r"^([A-Za-z0-9._-]+(?:\[[^\]]+\])?)\s*==\s*([0-9][\w.\-]*)\s*$", spec)
+    if not m:
+        return spec, False
+    return "%s>=%s" % (m.group(1), m.group(2)), True
+
+
+def rc_install_requirements(reqs, timeout=600, allow_relax=True):
+    """Install a list of pip specifiers in one shot, behind the memory gate.
+    On a resolution/build failure, retry ONCE with exact pins relaxed to floors
+    (a flagged migration). Returns
+    (ok, info{log, installed_specs, relaxed:[{from,to}], skipped_reason})."""
+    info = {"log": "", "installed_specs": [], "relaxed": [], "skipped_reason": None}
+    if not reqs:
+        return True, info
+    safe, reason = rc_preinstall_gate()
+    if not safe:
+        info["skipped_reason"] = reason
+        info["log"] = "SKIPPED_LOW_MEMORY: " + reason
+        return False, info
+
+    def _pip(specs):
+        try:
+            r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", *specs],
+                               capture_output=True, text=True, timeout=timeout)
+            return r.returncode == 0, (r.stderr or r.stdout)
+        except subprocess.TimeoutExpired:
+            return False, "TIMEOUT: pip install of declared requirements exceeded %ss" % timeout
+
+    ok, log = _pip(reqs)
+    if ok:
+        info["installed_specs"] = list(reqs)
+        info["log"] = "installed %d declared requirement(s)" % len(reqs)
+        return True, info
+    if allow_relax:
+        relaxed, changes = [], []
+        for spec in reqs:
+            new, changed = rc_relax_pin(spec)
+            relaxed.append(new)
+            if changed:
+                changes.append({"from": spec, "to": new})
+        if changes:
+            ok2, log2 = _pip(relaxed)
+            if ok2:
+                info["installed_specs"] = relaxed
+                info["relaxed"] = changes
+                info["log"] = ("installed declared requirements after relaxing %d exact pin(s)"
+                               % len(changes))
+                return True, info
+            log = log2
+    info["log"] = (log or "").strip()[-500:]
+    return False, info
+
+
 def attempt_executability(target_dir, max_iters=10, allow_install=False):
     """Rung-1 check: discover the entry point and try to make it RUN under the
     current environment, auto-repairing known failures. No claims needed.
@@ -633,6 +738,7 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
     patches, installed, attempts = [], [], []
     prev_err, tried_install = None, set()
     tried_editable = False
+    tried_requirements = False
     module_mode = None; module_root = None   # set when we recover via `python -m`
     for i in range(max_iters):
         r = run_script(ep, target_dir, as_module=module_mode, module_root=module_root)
@@ -643,6 +749,12 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
             return {"status": "RAN" if (patches or installed or notebook_converted) else "RAN_AS_IS",
                     "entrypoint": str(ep.relative_to(target_dir)),
                     "patches": patches, "installed": installed, "attempts": attempts,
+                    # Explicit reproduction-rung certification. This tool proves
+                    # the code RUNS (rung 1); it does NOT check whether the
+                    # numbers/figures are scientifically correct (rungs 2+).
+                    "rung_reached": 1,
+                    "rung_certified": "1 (executability) — it runs to completion",
+                    "not_verified": "numeric/scientific correctness (rung 2+)",
                     **({"run_as_module": module_mode} if module_mode else {}),
                     **({"from_notebook": notebook_converted} if notebook_converted else {}),
                     **({"notebook_warning": notebook_order_warning} if notebook_order_warning else {})}
@@ -669,6 +781,30 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
             # A submodule import (e.g. `skimage.filters`) failing usually means
             # the top-level package is absent, so install the top-level name.
             top = diag["module"].split(".")[0]
+            # FIRST missing third-party import: install the repo's DECLARED
+            # environment in one shot (faster + more faithful than discovering
+            # deps one failed import at a time). Stale exact pins are relaxed to
+            # floors as a FLAGGED fix. Only for a real dependency, not the repo's
+            # own package (that goes to the editable path below).
+            if (not tried_requirements and not looks_local(diag["module"], target_dir)):
+                tried_requirements = True
+                srcs = rc_find_requirements(target_dir)
+                req_src = next((s for s in srcs if s["kind"] == "requirements"), None)
+                if req_src is not None:
+                    reqs = rc_parse_requirements(req_src["path"])
+                    if reqs:
+                        ok_r, info_r = rc_install_requirements(reqs)
+                        if ok_r:
+                            installed.append({"requirements": req_src["path"].name,
+                                              "pkg": "(%d declared)" % len(info_r["installed_specs"])})
+                            for chg in info_r["relaxed"]:
+                                patches.append({"pattern": "PIN_RELAXED",
+                                                "change": "relaxed pin %s -> %s (flagged: may change results)"
+                                                          % (chg["from"], chg["to"])})
+                            prev_err = None
+                            continue
+                        # Declared install failed/ skipped — fall through to the
+                        # per-import path, which yields an honest per-package hand-off.
             # Boundary: never pip-install the repo's own module. A failing local
             # import is a package-structure problem for the agent, not a missing
             # dependency — and installing a local name risks pulling a lookalike.

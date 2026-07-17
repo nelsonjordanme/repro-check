@@ -71,6 +71,11 @@ def main(argv=None):
             print(f"  note: ran converted notebook {result['from_notebook']} in document order")
         if result.get("notebook_warning"):
             print(f"  ⚠ caveat: {result['notebook_warning']}")
+        # Honesty contract: say exactly what a green result certifies, and what
+        # it does NOT. RAN means rung 1 (it runs) — not that the science is right.
+        if result.get("rung_certified"):
+            print(f"  rung: certifies {result['rung_certified']}; "
+                  f"does NOT verify {result.get('not_verified', 'scientific correctness')}")
     else:
         print(rk.render_handoff_md(result))
 

@@ -150,6 +150,22 @@ Hand-offs render through the same `render_handoff_md(result)` and carry
   `notebook_warning` caveat: a top-to-bottom run may not match the saved
   outputs. Don't present an out-of-order notebook as a faithful reproduction.
 
+## Coverage + trust (v0.9)
+
+- **Declared environment first.** On the first missing third-party import,
+  repro-check installs the repo's declared deps (`requirements.txt`) in one
+  shot before discovering deps one failed import at a time. A stale exact pin
+  that no longer resolves is relaxed to a floor (`numpy==1.16.2` →
+  `numpy>=1.16.2`) and recorded as a `PIN_RELAXED` patch flagged "may change
+  results" — a migration, not a silent fix.
+- **Explicit rung in the result.** A `RAN`/`RAN_AS_IS` result carries
+  `rung_reached: 1`, `rung_certified`, and `not_verified`, and the CLI prints a
+  one-liner: it certifies the code RUNS, not that the science is correct.
+- **Re-runnable benchmark.** `benchmark/run_benchmark.py` regenerates the
+  runnability table across a corpus manifest (each repo on a fresh copy, never
+  mutating the corpus). The quoted percentages are auditable, not a static
+  claim.
+
 ## The reproduction ladder (know which rung you are on)
 
 1. **Executability** — does it run at all? ← **this tool's job**
