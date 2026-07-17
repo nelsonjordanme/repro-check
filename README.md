@@ -15,6 +15,60 @@ rot, removed APIs, environment quirks, and entry-point problems dominate — and
 fixing them is tedious, unrewarding, and only recently automatable, because it
 takes reasoning, not a fixed script.
 
+## Try it in 30 seconds
+
+```bash
+pip install git+https://github.com/nelsonjordanme/repro-check.git
+```
+
+Point it at a repo checkout. The bundled fixture is a deliberately-broken
+analysis (a hardcoded absolute data path + a removed `np.float` API) — exactly
+the kind of rot that stops old code:
+
+**Before** — run the script the way the paper intended, and it dies:
+
+```console
+$ python analysis.py
+FileNotFoundError: [Errno 2] No such file or directory:
+    '/home/researcher/project/data/measurements.csv'
+```
+
+**After** — point `repro-check` at the same repo:
+
+```console
+$ repro-check fixtures/example_paper
+✓ RUNS (RAN)  entry: analysis.py
+  fix: repoint data path -> measurements.csv
+  fix: np.float -> np.float64
+```
+
+It found the entry point, repaired both breakages, and proved it runs — exit
+code `0`. When a failure instead needs *your* judgment, it stops honestly and
+tells you exactly what to do:
+
+```console
+$ repro-check path/to/some_repo
+# repro-check hand-off — needs agent
+**Stopped at rung:** 0 (does not start)
+**Entry point:** `run.py`
+
+## Why it stopped
+ran, but exited requiring command-line arguments (argparse)
+
+## Suggested next action (CLI_ARGS)
+Script needs run-time arguments. Read the repo README/usage for the required
+flags, then re-run with them supplied.
+
+## Run-time arguments this script needs
+- required `--input` — path to the input CSV
+```
+
+Exit code `2` means *needs a human/agent step* (not a crash); `1` means a hard
+failure. That hand-off — not a guess — is the point. A terminal cast replaying
+this run (synthesized from the tool's real captured output) is in
+[`demo/quickstart.cast`](demo/quickstart.cast) (play with
+[asciinema](https://asciinema.org): `asciinema play demo/quickstart.cast`).
+
 ## The model: scaffold clears the runway, agent flies the plane
 
 `repro-check` owns the mechanical part and stops honestly at the judgment part:
@@ -93,6 +147,16 @@ method is correct (rung 3) or robust (rung 4). **Reproducible ≠ correct**: a
 running repo means it executes, not that the science is sound.
 
 ## Status
+
+v0.7 — **first-run experience + robustness.** A "Try it in 30 seconds"
+before/after now leads the README, with a terminal cast in `demo/`. Three
+robustness fixes across languages: R build failures caused by a missing OS
+library name the exact system packages to install (`R_SYSTEM_DEP`); a genuine
+Bioconductor version-lockstep wall is surfaced honestly (`R_BIOC_VERSION`)
+rather than looping; dependency installs are gated by an available-memory
+check and a hard timeout, so a starved machine gets an honest "skipped" instead
+of an OOM-killed half-written package; and a notebook last run out of order is
+flagged with a caveat that a top-to-bottom run may not match the saved outputs.
 
 v0.6 — **R support.** A repo with no Python entry point but `.R`/`.Rmd` files (or
 a `DESCRIPTION`) now routes automatically to an R engine: it discovers the entry

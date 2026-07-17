@@ -122,11 +122,14 @@ missing package, and re-run.
   known Bioc name list). These are the mechanical R wins.
 - **What it hands off (honestly):** missing data files (`R_MISSING_DATA`),
   interactive/platform-only calls like `file.choose`/`choose.dir`
-  (`R_INTERACTIVE`), package installs that fail on a system dependency or
-  Bioconductor version lockstep (`R_DEP_INSTALL`), and unresolved
-  `could not find function` (`R_FUNCTION_NOT_FOUND`). Per the R pilot, **most R
-  failures are missing data or environment, not source-code rot** — so the R fix
-  set is deliberately install-focused, not source-patching.
+  (`R_INTERACTIVE`), a build that fails on a **missing system library** — the
+  hand-off names the exact OS packages to install (`R_SYSTEM_DEP`), a
+  **Bioconductor version-lockstep** wall where the package has no build for the
+  release matching your R (`R_BIOC_VERSION`), other install failures
+  (`R_DEP_INSTALL`), and unresolved `could not find function`
+  (`R_FUNCTION_NOT_FOUND`). Per the R pilot, **most R failures are missing data
+  or environment, not source-code rot** — so the R fix set is deliberately
+  install-focused, not source-patching.
 - **If R is not installed:** the engine returns an honest `R_NOT_AVAILABLE`
   hand-off rather than crashing. It finds `Rscript` via the
   `REPRO_CHECK_RSCRIPT` env var, then `PATH`, then sibling conda envs.
@@ -134,6 +137,18 @@ missing package, and re-run.
 
 Hand-offs render through the same `render_handoff_md(result)` and carry
 `language: "R"`.
+
+## Robustness (v0.7)
+
+- **Safe dependency installs.** Before any pip/CRAN/Bioc install, a memory gate
+  checks available RAM (512 MB floor, override with `REPRO_CHECK_MIN_INSTALL_MB`)
+  and installs run under a hard timeout. On a starved machine you get an honest
+  "install skipped — low memory" hand-off, never an OOM-killed half-written
+  package. Unknown RAM never blocks.
+- **Notebook fidelity.** A converted notebook whose cells were last run **out of
+  order** (non-monotonic `execution_count`) still runs, but the result carries a
+  `notebook_warning` caveat: a top-to-bottom run may not match the saved
+  outputs. Don't present an out-of-order notebook as a faithful reproduction.
 
 ## The reproduction ladder (know which rung you are on)
 

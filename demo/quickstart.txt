@@ -1,0 +1,13 @@
+$ python analysis.py
+Traceback (most recent call last):
+  File "analysis.py", line 12, in <module>
+    df = pd.read_csv(DATA_PATH)
+FileNotFoundError: [Errno 2] No such file or directory:
+    '/home/researcher/project/data/measurements.csv'
+
+$ repro-check fixtures/example_paper
+✓ RUNS (RAN)  entry: analysis.py
+  fix: repoint data path -> measurements.csv
+  fix: np.float -> np.float64
+
+# exit code 0 — it runs.

@@ -10,3 +10,5 @@ repro_report.json
 repro_report.md
 
 # CI workflow added via GitHub web UI (token lacked workflow scope)
+.Rlib/
+*.repro_nb.py

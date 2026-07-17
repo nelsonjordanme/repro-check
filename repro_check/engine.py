@@ -276,6 +276,42 @@ def discover_entrypoint(target_dir):
     return sorted(pys, key=score)[0]
 
 
+def notebook_out_of_order(nb):
+    """Inspect a parsed notebook's saved execution_count metadata and decide
+    whether its cells were last run OUT OF DOCUMENT ORDER. If so, the saved
+    outputs reflect a different execution path than a top-to-bottom run, so a
+    linear reproduction may legitimately produce different results — an honest
+    caveat, not a silent 'reproduced'.
+
+    Returns a dict {out_of_order: bool, detail: str, counts: [...]}. Cells with
+    no execution_count (never run / cleared) are ignored for the ordering test;
+    if fewer than two executed cells carry counts, we cannot judge and report
+    out_of_order=False.
+    """
+    counts = []
+    cells = nb["cells"] if isinstance(nb, dict) else nb.cells
+    for cell in cells:
+        if cell.get("cell_type") != "code":
+            continue
+        if not (cell.get("source") or "").strip():
+            continue
+        counts.append(cell.get("execution_count"))
+    executed = [c for c in counts if isinstance(c, int)]
+    if len(executed) < 2:
+        return {"out_of_order": False, "detail": "", "counts": counts}
+    # Non-monotonic execution_count in document order => ran out of order.
+    ascending = all(executed[i] < executed[i + 1] for i in range(len(executed) - 1))
+    if ascending:
+        return {"out_of_order": False, "detail": "", "counts": counts}
+    n_uncleared = sum(1 for c in counts if c is None)
+    detail = ("cell execution_count is non-monotonic in document order "
+              "(%s) — the notebook was last run out of order, so its saved "
+              "outputs may not match a top-to-bottom run" % executed)
+    if n_uncleared:
+        detail += ("; %d code cell(s) were never run (no execution_count)" % n_uncleared)
+    return {"out_of_order": True, "detail": detail, "counts": counts}
+
+
 def notebook_to_script(nb_path, out_path=None):
     """Convert a Jupyter notebook's code cells to a runnable .py file, reusing the
     whole existing run/diagnose/fix loop instead of a parallel notebook executor.
@@ -285,18 +321,25 @@ def notebook_to_script(nb_path, out_path=None):
       - cell magics (`%%time`)                   -> whole cell's magic line dropped
       - shell escapes (`!pip install x`)         -> commented out
       - `display(...)` / `get_ipython()`         -> commented out
-    Returns the written Path, or None if the notebook has no code or nbformat is
+    Returns (Path, order_info) where order_info is the notebook_out_of_order()
+    dict, or (None, None) if the notebook has no code or nbformat is
     unavailable (caller falls back to NO_ENTRYPOINT).
     """
     try:
         import nbformat
     except Exception:
-        return None
+        return None, None
     try:
         nb = nbformat.read(str(nb_path), as_version=4)
     except Exception:
-        return None
+        return None, None
+    order_info = notebook_out_of_order(nb)
     lines = []
+    if order_info["out_of_order"]:
+        lines.append("# [repro-check: WARNING] " + order_info["detail"])
+        lines.append("# repro-check runs cells in DOCUMENT order; results may differ "
+                     "from the saved outputs.")
+        lines.append("")
     for cell in nb.cells:
         if cell.get("cell_type") != "code":
             continue
@@ -308,10 +351,10 @@ def notebook_to_script(nb_path, out_path=None):
                 lines.append(ln)
         lines.append("")  # cell boundary
     if not any(l.strip() and not l.startswith("#") for l in lines):
-        return None
+        return None, order_info
     out = Path(out_path) if out_path else Path(nb_path).with_suffix(".repro_nb.py")
     out.write_text("\n".join(lines) + "\n")
-    return out
+    return out, order_info
 
 
 # Files that signal a repo is NOT a runnable-Python project (so NO_ENTRYPOINT
@@ -351,11 +394,98 @@ def looks_local(module, target_dir):
     return False
 
 
+# Minimum free RAM (MB) below which we refuse to start a dependency install.
+# Installs of scientific wheels (and especially any source build) can spike
+# memory; on a starved machine pip gets OOM-killed mid-build, leaving a
+# half-written package that is worse than a clean "skipped". Overridable via
+# REPRO_CHECK_MIN_INSTALL_MB.
+MIN_INSTALL_RAM_MB = 512
+
+
+def rc_available_ram_mb():
+    """Best-effort available RAM in MB, or None if it can't be determined.
+    Uses psutil if present, else /proc/meminfo (Linux), else sysconf. Never
+    raises — an unknown value must not block installs on platforms we can't
+    read."""
+    try:
+        import psutil
+        return int(psutil.virtual_memory().available / (1024 * 1024))
+    except Exception:
+        pass
+    try:
+        with open("/proc/meminfo") as f:
+            info = {}
+            for line in f:
+                k, _, v = line.partition(":")
+                info[k.strip()] = v.strip()
+        for key in ("MemAvailable", "MemFree"):
+            if key in info:
+                return int(info[key].split()[0]) / 1024  # kB -> MB
+    except Exception:
+        pass
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        if pages > 0 and page_size > 0:
+            return int(pages * page_size / (1024 * 1024))
+    except (ValueError, OSError, AttributeError):
+        pass
+    # macOS: no SC_AVPHYS_PAGES; parse `vm_stat` (free + inactive + speculative).
+    try:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5).stdout
+        page_size = 4096
+        m = re.search(r"page size of (\d+) bytes", out)
+        if m:
+            page_size = int(m.group(1))
+        free = spec = inactive = 0
+        for line in out.splitlines():
+            if "Pages free:" in line:
+                free = int(re.sub(r"\D", "", line.split(":")[1]))
+            elif "Pages speculative:" in line:
+                spec = int(re.sub(r"\D", "", line.split(":")[1]))
+            elif "Pages inactive:" in line:
+                inactive = int(re.sub(r"\D", "", line.split(":")[1]))
+        avail_pages = free + spec + inactive
+        if avail_pages > 0:
+            return int(avail_pages * page_size / (1024 * 1024))
+    except Exception:
+        pass
+    return None
+
+
+def rc_preinstall_gate(min_mb=None):
+    """Decide whether it is safe to start an install. Returns (ok, reason).
+    ok=True with reason=None when memory is sufficient OR unknown (we don't
+    block on an unreadable value); ok=False with a human reason when memory is
+    known and below the floor."""
+    if min_mb is None:
+        try:
+            min_mb = int(os.environ.get("REPRO_CHECK_MIN_INSTALL_MB", MIN_INSTALL_RAM_MB))
+        except (TypeError, ValueError):
+            min_mb = MIN_INSTALL_RAM_MB
+    avail = rc_available_ram_mb()
+    if avail is not None and avail < min_mb:
+        return False, ("only %d MB RAM available (< %d MB floor) — install skipped "
+                       "to avoid an OOM-killed, half-written package. Free memory or "
+                       "set REPRO_CHECK_MIN_INSTALL_MB to override." % (int(avail), min_mb))
+    return True, None
+
+
 def pip_install(module, timeout=300):
-    """Install the pip distribution for an import name. Returns (ok, pkg, log)."""
+    """Install the pip distribution for an import name. Returns (ok, pkg, log).
+    Gated by a pre-install memory check and a hard timeout: on a starved
+    machine or a hung build it returns a clean, honest failure log rather than
+    crashing or leaving a half-written package. A memory skip is flagged in the
+    log with the marker 'SKIPPED_LOW_MEMORY:'."""
     pkg = IMPORT_TO_PKG.get(module, module)
-    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg],
-                       capture_output=True, text=True, timeout=timeout)
+    safe, reason = rc_preinstall_gate()
+    if not safe:
+        return False, pkg, "SKIPPED_LOW_MEMORY: " + reason
+    try:
+        r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", pkg],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, pkg, "TIMEOUT: pip install %s exceeded %ss" % (pkg, timeout)
     return r.returncode == 0, pkg, (r.stderr or r.stdout).strip()[-300:]
 
 
@@ -375,6 +505,7 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
     target_dir = Path(target_dir).resolve()
     ep = discover_entrypoint(target_dir)
     notebook_converted = None
+    notebook_order_warning = None
     if ep is None:
         # No .py entry point. Before giving up, see what kind of repo this is.
         scope = detect_scope(target_dir)
@@ -384,9 +515,13 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
             nbs = sorted((p for p in target_dir.rglob("*.ipynb") if ".git" not in p.parts),
                          key=lambda p: p.stat().st_size, reverse=True)
             for nb in nbs:
-                converted = notebook_to_script(nb, nb.with_suffix(".repro_nb.py"))
+                converted, order_info = notebook_to_script(nb, nb.with_suffix(".repro_nb.py"))
                 if converted:
-                    ep = converted; notebook_converted = str(nb.relative_to(target_dir)); break
+                    ep = converted
+                    notebook_converted = str(nb.relative_to(target_dir))
+                    if order_info and order_info.get("out_of_order"):
+                        notebook_order_warning = order_info["detail"]
+                    break
         if ep is None:
             # R project with no Python entry point: route to the R engine (v0.6)
             # instead of a bare out-of-scope verdict. If R is unavailable, the R
@@ -415,7 +550,8 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
                     "entrypoint": str(ep.relative_to(target_dir)),
                     "patches": patches, "installed": installed, "attempts": attempts,
                     **({"run_as_module": module_mode} if module_mode else {}),
-                    **({"from_notebook": notebook_converted} if notebook_converted else {})}
+                    **({"from_notebook": notebook_converted} if notebook_converted else {}),
+                    **({"notebook_warning": notebook_order_warning} if notebook_order_warning else {})}
 
         diag = classify_failure(r["stderr"])
 
@@ -454,8 +590,14 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
             ok, pkg, log = pip_install(top)
             tried_install.add(top)
             if not ok:
+                if log.startswith("SKIPPED_LOW_MEMORY:"):
+                    reason = (f"install of {pkg} skipped — {log.split(':',1)[1].strip()}")
+                elif log.startswith("TIMEOUT:"):
+                    reason = f"install of {pkg} timed out — {log.split(':',1)[1].strip()}"
+                else:
+                    reason = f"pip install {pkg} failed"
                 return build_handoff(target_dir, ep, patches, installed, attempts, diag=diag,
-                        reason=f"pip install {pkg} failed", traceback=r["stderr"],
+                        reason=reason, traceback=(r["stderr"] or "") + "\n[install log] " + log,
                         module_mode=module_mode)
             installed.append({"import": top, "pkg": pkg})
             prev_err = None  # environment changed; a repeated error is now meaningful
@@ -690,6 +832,17 @@ def render_handoff_md(h):
          f"## Why it stopped\n{h.get('reason') or (h.get('diagnosis') or {}).get('pattern','')}",
          "",
          f"## Suggested next action ({h['next_action_key']})\n{h['suggested_next_action']}"]
+    sysdeps = h.get("system_deps")
+    if sysdeps:
+        pkg = h.get("failed_pkg", "the package")
+        L += ["", "## System libraries needed",
+              f"`{pkg}` needs OS-level libraries that `install.packages()` cannot provide. "
+              "Install these first (Debian/Ubuntu package names shown), then re-run:",
+              "```bash",
+              "apt-get install -y " + " ".join(sysdeps),
+              "```",
+              "On macOS use the Homebrew equivalents; in a conda env, the `-dev`/`-devel` "
+              "packages are usually on conda-forge."]
     cs = h.get("cli_spec")
     if cs:
         L += ["", "## Run-time arguments this script needs"]
@@ -904,9 +1057,93 @@ R_NEXT_ACTION = {
     "R_NOT_AVAILABLE":      "R (Rscript) is not installed or not on PATH, so this R project "
                             "cannot be run. Install R, or set the REPRO_CHECK_RSCRIPT "
                             "environment variable to your Rscript path, then re-run.",
+    "R_BIOC_VERSION":       "A Bioconductor package is not available for the Bioconductor "
+                            "release that matches your R version (a version-lockstep wall). "
+                            "Either install the R version whose Bioconductor release ships this "
+                            "package, or find the package in the Bioconductor archive for your "
+                            "release. repro-check will not silently install a mismatched build.",
+    "R_SYSTEM_DEP":         "A package failed to build because a system (OS-level) library or "
+                            "header is missing \u2014 R can't install this with install.packages() "
+                            "alone. Install the named system packages (e.g. via apt/brew/conda), "
+                            "then re-run so the R package can compile.",
     "R_GENERIC":            "Novel R failure outside the known pattern set. Read the traceback "
                             "and repair directly, then re-run.",
 }
+
+# R packages whose install COMPILES against an OS-level library. When the build
+# fails, install.packages() can't fix it — the user needs the system package.
+# Maps the R package -> the system libraries it needs, with common apt names.
+R_SYSTEM_DEPS = {
+    "xml2":        ["libxml2-dev"],
+    "curl":        ["libcurl4-openssl-dev"],
+    "openssl":     ["libssl-dev"],
+    "sf":          ["libgdal-dev", "libproj-dev", "libgeos-dev"],
+    "rgdal":       ["libgdal-dev", "libproj-dev"],
+    "rgeos":       ["libgeos-dev"],
+    "terra":       ["libgdal-dev", "libproj-dev", "libgeos-dev"],
+    "units":       ["libudunits2-dev"],
+    "systemfonts": ["libfontconfig1-dev", "libfreetype6-dev"],
+    "textshaping": ["libharfbuzz-dev", "libfribidi-dev"],
+    "ragg":        ["libfontconfig1-dev", "libfreetype6-dev", "libpng-dev", "libtiff5-dev", "libjpeg-dev"],
+    "magick":      ["libmagick++-dev"],
+    "pdftools":    ["libpoppler-cpp-dev"],
+    "rJava":       ["default-jdk"],
+    "V8":          ["libv8-dev"],
+    "gert":        ["libgit2-dev"],
+    "hdf5r":       ["libhdf5-dev"],
+    "RMySQL":      ["libmariadb-dev"],
+    "RPostgreSQL": ["libpq-dev"],
+}
+
+# Substrings that appear in a compiler/linker failure when an OS library header
+# is missing, mapped to the system package that provides it. Used when the
+# failing R package isn't in R_SYSTEM_DEPS but the build log names the header.
+R_SYSLIB_HINTS = {
+    "libxml/":              "libxml2-dev",
+    "curl/curl.h":          "libcurl4-openssl-dev",
+    "openssl/":             "libssl-dev",
+    "gdal":                 "libgdal-dev",
+    "proj_api.h":           "libproj-dev",
+    "geos_c.h":             "libgeos-dev",
+    "udunits2":             "libudunits2-dev",
+    "fontconfig":           "libfontconfig1-dev",
+    "ft2build.h":           "libfreetype6-dev",
+    "hb.h":                 "libharfbuzz-dev",
+    "png.h":                "libpng-dev",
+    "jpeglib.h":            "libjpeg-dev",
+    "Magick++.h":           "libmagick++-dev",
+    "poppler":              "libpoppler-cpp-dev",
+    "hdf5.h":               "libhdf5-dev",
+    "libpq-fe.h":           "libpq-dev",
+    "jni.h":                "default-jdk",
+}
+
+
+def rc_r_system_deps(pkg, build_log=""):
+    """Given a package that failed to install and its build log, return the
+    list of system (apt-style) packages needed to compile it, or [] if none
+    can be inferred. Combines the static map with header hints from the log."""
+    deps = list(R_SYSTEM_DEPS.get(pkg, []))
+    if build_log:
+        for needle, sysdep in R_SYSLIB_HINTS.items():
+            if needle in build_log and sysdep not in deps:
+                deps.append(sysdep)
+    return deps
+
+
+def rc_is_system_dep_failure(build_log):
+    """Heuristic: does a failed R package build look like a MISSING SYSTEM
+    LIBRARY (as opposed to a plain package-not-found or a network error)?"""
+    if not build_log:
+        return False
+    markers = [
+        "cannot find -l", "No such file or directory", "fatal error:",
+        "unable to load shared object", "configuration failed",
+        "libraries required but not found", "Cannot find ", "not found. ",
+        "ERROR: dependency", "compilation failed", "C++ compiler",
+    ]
+    lo = build_log
+    return any(m in lo for m in markers)
 
 
 def rc_find_rscript():
@@ -1007,12 +1244,27 @@ def classify_r_failure(stderr):
 
 def rc_install_r_pkg(pkg, rscript, bioc=False, timeout=600):
     """Install a CRAN or Bioconductor package to the writable user lib, then
-    verify it loads. Returns (ok_bool, log_tail)."""
+    verify it loads. Returns (ok_bool, info) where info is a dict:
+    {log, system_deps}. system_deps is a non-empty list ONLY when the build
+    failed and looks like a missing OS-level library.
+
+    Bioconductor installs pin to the release matching the running R version
+    (BiocManager picks the correct Bioc release for this R), avoiding the
+    version-lockstep failures where a newer Bioc refuses an older R."""
     libs = rc_r_libs_user()
     lp = '.libPaths(c("%s", .libPaths())); ' % libs
     if bioc:
-        expr = (lp + 'if(!requireNamespace("BiocManager",quietly=TRUE)) '
-                'install.packages("BiocManager",repos="%s",quiet=TRUE); ' % CRAN_REPO
+        # BiocManager::install() already resolves the Bioconductor release that
+        # matches the RUNNING R version — that R-matched resolution IS the
+        # lockstep-safety, so we do NOT force an explicit version= (forcing
+        # version() is redundant and actively breaks when the installed
+        # BiocManager is stale and maps R to an unpopulated release).
+        # We first refresh BiocManager from CRAN so its R->Bioc map is current,
+        # then print the resolved release for transparency in the log.
+        expr = (lp
+                + 'install.packages("BiocManager",repos="%s",quiet=TRUE); ' % CRAN_REPO
+                + 'bv <- tryCatch(as.character(BiocManager::version()), error=function(e) "?"); '
+                + 'cat("REPRO_CHECK_BIOC_VERSION=", bv, "\\n", sep=""); '
                 + 'BiocManager::install("%s",update=FALSE,ask=FALSE)' % pkg)
     else:
         expr = lp + 'install.packages("%s",repos="%s",quiet=TRUE)' % (pkg, CRAN_REPO)
@@ -1020,11 +1272,26 @@ def rc_install_r_pkg(pkg, rscript, bioc=False, timeout=600):
     try:
         r = subprocess.run([rscript, "-e", expr], capture_output=True,
                            text=True, timeout=timeout, env=env)
+        log = (r.stderr or "") + (r.stdout or "")
     except subprocess.TimeoutExpired:
-        return False, "install timeout (%ss)" % timeout
+        return False, {"log": "install timeout (%ss)" % timeout, "system_deps": [],
+                       "bioc_version": None, "version_lockstep": False}
     chk = subprocess.run([rscript, "-e", lp + 'cat(requireNamespace("%s",quietly=TRUE))' % pkg],
                          capture_output=True, text=True, env=env)
-    return chk.stdout.strip() == "TRUE", (r.stderr or r.stdout)[-300:]
+    ok = chk.stdout.strip() == "TRUE"
+    bioc_version = None
+    mv = re.search(r"REPRO_CHECK_BIOC_VERSION=([\d.]+)", log)
+    if mv:
+        bioc_version = mv.group(1)
+    system_deps = []
+    if not ok and rc_is_system_dep_failure(log):
+        system_deps = rc_r_system_deps(pkg, log)
+    # A genuine version-lockstep wall: the resolved Bioc release has no such
+    # package (usually the running R is too old/new for the package's release).
+    version_lockstep = bool(not ok and re.search(
+        r"not available for Bioconductor version|package .* is not available", log))
+    return ok, {"log": log[-500:], "system_deps": system_deps,
+                "bioc_version": bioc_version, "version_lockstep": version_lockstep}
 
 
 def attempt_r_executability(target_dir, max_iters=12, allow_install=True):
@@ -1058,14 +1325,26 @@ def attempt_r_executability(target_dir, max_iters=12, allow_install=True):
         if allow_install and diag["pattern"] in ("MISSING_PKG_CRAN", "MISSING_PKG_BIOC") \
                 and pkg and pkg not in tried:
             tried.add(pkg)
-            ok, log = rc_install_r_pkg(pkg, rscript, bioc=(diag["pattern"] == "MISSING_PKG_BIOC"))
+            ok, info = rc_install_r_pkg(pkg, rscript, bioc=(diag["pattern"] == "MISSING_PKG_BIOC"))
             if ok:
                 installed.append({"pkg": pkg, "source": "bioc" if diag["pattern"] == "MISSING_PKG_BIOC" else "cran"})
                 continue
+            system_deps = info.get("system_deps") or []
+            if system_deps:
+                reason = "system libraries required to build %s" % pkg
+            elif info.get("version_lockstep"):
+                reason = ("%s not available for Bioconductor %s (the release matching this R)"
+                          % (pkg, info.get("bioc_version") or "?"))
+            else:
+                reason = "install of %s failed" % pkg
             return {"status": "NEEDS_AGENT", "language": "R",
                     "entrypoint": str(ep.relative_to(target_dir)),
                     "installed": installed, "attempts": attempts,
-                    "reason": "install of %s failed" % pkg, "diagnosis": diag,
+                    "reason": reason, "diagnosis": diag,
+                    "failed_pkg": pkg, "system_deps": system_deps,
+                    "version_lockstep": info.get("version_lockstep", False),
+                    "bioc_version": info.get("bioc_version"),
+                    "install_log": info.get("log", ""),
                     "traceback": r["stderr"][-1500:]}
         return {"status": "NEEDS_AGENT", "language": "R",
                 "entrypoint": str(ep.relative_to(target_dir)),
@@ -1089,7 +1368,11 @@ def rc_shape_r_result(res, target_dir):
     pat = diag.get("pattern")
     if reason == "R_NOT_AVAILABLE":
         key = "R_NOT_AVAILABLE"
-    elif "install of" in reason or "install timeout" in reason:
+    elif res.get("system_deps"):
+        key = "R_SYSTEM_DEP"
+    elif res.get("version_lockstep") or "not available for Bioconductor" in reason:
+        key = "R_BIOC_VERSION"
+    elif "install of" in reason or "install timeout" in reason or "system libraries" in reason:
         key = "R_DEP_INSTALL"
     elif pat == "MISSING_DATA":
         key = "R_MISSING_DATA"

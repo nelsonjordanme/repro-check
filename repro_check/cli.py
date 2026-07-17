@@ -46,6 +46,10 @@ def main(argv=None):
             print(f"  fix: {p.get('change')}")
         for d in result.get("installed", []):
             print(f"  installed: {d['pkg']}")
+        if result.get("from_notebook"):
+            print(f"  note: ran converted notebook {result['from_notebook']} in document order")
+        if result.get("notebook_warning"):
+            print(f"  ⚠ caveat: {result['notebook_warning']}")
     else:
         print(rk.render_handoff_md(result))
 

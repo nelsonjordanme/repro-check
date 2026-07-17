@@ -31,3 +31,7 @@ jobs:
         run: |
           cp -r fixtures/example_r_paper /tmp/rpaper
           python -m repro_check /tmp/rpaper
+      - name: smoke-test the CLI on the bundled notebook fixture
+        run: |
+          cp -r fixtures/example_notebook /tmp/nbpaper
+          python -m repro_check /tmp/nbpaper
