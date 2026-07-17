@@ -742,7 +742,8 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
     module_mode = None; module_root = None   # set when we recover via `python -m`
     for i in range(max_iters):
         r = run_script(ep, target_dir, as_module=module_mode, module_root=module_root)
-        err_line = (r["stderr"].strip().splitlines()[-1] if r["returncode"] else None)
+        err_line = (r["stderr"].strip().splitlines()[-1]
+                    if r["returncode"] and r["stderr"].strip() else None)
         attempts.append({"iter": i, "returncode": r["returncode"], "error": err_line,
                          **({"mode": f"-m {module_mode}"} if module_mode else {})})
         if r["returncode"] == 0:
@@ -1195,7 +1196,7 @@ def reproduce(target_dir, claims_path=None, max_iters=6, tol=None):
         r = run_script(script, work)
         attempts.append({"iter": i, "returncode": r["returncode"],
                          "error": (r["stderr"].strip().splitlines()[-1]
-                                   if r["returncode"] else None)})
+                                   if r["returncode"] and r["stderr"].strip() else None)})
         if r["returncode"] == 0:
             final = r; break
         diag = classify_failure(r["stderr"])

@@ -247,6 +247,20 @@ def test_rung_reporting():
     return True
 
 
+def test_silent_nonzero_exit():
+    """A script that exits nonzero but prints NOTHING to stderr must hand off
+    cleanly, not crash on an empty splitlines()[-1] (regression: found on a real
+    ReScience repo during benchmark validation)."""
+    import tempfile
+    from pathlib import Path
+    td = Path(tempfile.mkdtemp())
+    (td / "run.py").write_text("import sys; sys.exit(1)\n")  # nonzero, silent
+    res = rk.attempt_executability(td, allow_install=False, max_iters=3)
+    assert isinstance(res, dict) and res["status"] == "NEEDS_AGENT", res
+    assert res["attempts"][-1]["error"] is None  # no fabricated error line
+    return True
+
+
 def test_benchmark_harness():
     """The benchmark harness runs on the bundled fixtures, produces a summary,
     and does NOT mutate the fixtures (it works on fresh copies)."""
@@ -296,5 +310,7 @@ if __name__ == "__main__":
     print("PASS — declared-env install + flagged pin relaxation")
     test_rung_reporting()
     print("PASS — explicit reproduction-rung reporting")
+    test_silent_nonzero_exit()
+    print("PASS — silent nonzero-exit hands off cleanly (no empty-stderr crash)")
     test_benchmark_harness()
     print("PASS — benchmark harness runs on fixtures without mutating them")

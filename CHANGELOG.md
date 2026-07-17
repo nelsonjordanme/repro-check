@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.9.1
+
+Bugfix (found during real-repo benchmark validation):
+
+- A script that exits nonzero but prints nothing to stderr no longer crashes the
+  engine (`IndexError` on `splitlines()[-1]`). It now hands off cleanly as a
+  GENERIC / NEEDS_AGENT case, with no fabricated error line. Guard added at both
+  the main loop and the notebook loop; regression test `test_silent_nonzero_exit`.
+
 ## v0.9.0
 
 Coverage + trust: install what the repo declares, be explicit about what a
