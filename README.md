@@ -24,6 +24,10 @@ takes reasoning, not a fixed script.
 - **a small set of *verified* mechanical fixes** — removed numpy/yaml APIs,
   hardcoded paths, missing PyPI packages, Python-2 syntax, relative-import →
   run-as-module. Deliberately not an ever-growing auto-fix library;
+- **R projects too (v0.6)** — a repo with no Python but `.R`/`.Rmd` files routes
+  to an R engine that runs it under `Rscript`, installs missing CRAN/Bioconductor
+  packages, and hands off honestly on missing data, interactive calls, or install
+  failures;
 - **an honest hand-off at the seam** — when a failure needs judgment, it returns
   a structured note: the stopping rung, what it already changed (a working
   migration diff), the exact traceback, and a *specific keyed next action*
@@ -48,6 +52,7 @@ repro-check/
 ├── SKILL.md              # agent-facing model + usage contract
 ├── kernel.py             # engine: discover_entrypoint, attempt_executability,
 │                         #   classify_failure, apply_patch, build_handoff, reproduce
+│                         #   + R engine: attempt_r_executability, classify_r_failure
 ├── test_repro.py         # self-test against the bundled broken fixture
 ├── RUNNABILITY_STUDY.json# the 43-repo ReScience-C measurement behind the numbers
 ├── DEMO_end_to_end.json  # worked trace: scaffold → hand-off → agent → runs
@@ -89,19 +94,20 @@ running repo means it executes, not that the science is sound.
 
 ## Status
 
-v0.5 — widened what counts as a runnable repo, driven by a 200-repo biomedical
-sample where a quarter of repos had no `.py` entry point the tool could find:
+v0.6 — **R support.** A repo with no Python entry point but `.R`/`.Rmd` files (or
+a `DESCRIPTION`) now routes automatically to an R engine: it discovers the entry
+script, runs it under `Rscript` (headless, writable user library), installs a
+missing CRAN or Bioconductor package, and re-runs — the same
+run→classify→fix→re-run→hand-off loop as Python. Grounded in an 11-repo
+biomedical-R feasibility pilot (`R_PILOT_STUDY.json`): most R failures are
+missing data or environment, not source-code rot, so the R fix set is
+install-focused (CRAN/Bioconductor) and hands off on missing data, interactive
+calls (`file.choose`/`choose.dir`), and install failures. If R is not installed,
+the engine returns an honest `R_NOT_AVAILABLE` note. Mixed Python+R repos still
+route to Python.
 
-- **Jupyter notebook support.** When a repo has no script but has notebooks, the
-  largest notebook is converted to a runnable script (IPython magics and shell
-  escapes neutralised) and run through the same fix loop — turning ~a third of
-  the previously-dead "no entry point" bucket into real runs or real diagnoses.
-- **Scope-aware verdicts.** A repo with no Python at all no longer returns a bare
-  "NO_ENTRYPOINT". It says *why*: an R project, a data-only repo, or
-  notebook-based — an honest out-of-scope answer instead of a misleading failure.
-
-v0.4 / v0.4.1 — reject README placeholder lines as CLI suggestions; fix
-multi-line Python-2 `print` conversion and expose applied patches in the hand-off.
+v0.5 — notebook support (largest `.ipynb` converted and run) and scope-aware
+`NO_ENTRYPOINT` reasons.
 
 v0.3 — deepened the two hand-off / repair paths that matter most on real repos:
 

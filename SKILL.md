@@ -1,20 +1,20 @@
 ---
 name: repro-check
 description: >-
-  Get old or broken Python code running again. Load this when code that used to
-  work won't run, an old repo or paper's analysis fails on a modern setup, or
-  someone wants to reproduce, replicate, re-run, revive, or just get a GitHub
-  repo or paper's code running, or to diagnose why a script errors on launch.
-  Handles common breakages verbatim: ModuleNotFoundError / No module named,
-  packages that won't install, "module numpy has no attribute float" and other
-  removed numpy/np.int APIs, yaml.load() missing-Loader errors, hardcoded paths
-  / FileNotFoundError, OpenMP "multiple copies of the OpenMP runtime" aborts,
-  "attempted relative import with no known parent package", which-file-do-I-run
-  entry-point confusion, and Python-2 syntax. It finds the entry point, fixes
-  the environment, auto-applies verified mechanical repairs, re-runs to prove
-  it, and when a failure needs judgment hands back a structured note on exactly
-  where it stopped and what to do next. A runnability scaffold, never a
-  pass/fail verdict on the science.
+  Get old or broken Python (or R) code running again. Load this when code that
+  used to work won't run, an old repo or paper's analysis fails on a modern
+  setup, or someone wants to reproduce, replicate, re-run, revive, or just get a
+  GitHub repo or paper's code running, or to diagnose why a script errors on
+  launch. Handles common breakages verbatim: ModuleNotFoundError / No module
+  named, packages that won't install, removed numpy APIs ("no attribute float"),
+  yaml.load() missing-Loader, hardcoded paths / FileNotFoundError, OpenMP
+  runtime aborts, "attempted relative import", which-file-do-I-run confusion,
+  and Python-2 syntax. It finds the entry point, fixes the environment,
+  auto-applies verified repairs, re-runs to prove it, and when a failure needs
+  judgment hands back a structured note on where it stopped and what to do next.
+  Also routes R projects (.R/.Rmd) to an R engine that installs missing
+  CRAN/Bioconductor packages and hands off honestly. A runnability scaffold,
+  never a pass/fail verdict on the science.
 ---
 
 # repro-check — a runnability scaffold for reproducing computational papers
@@ -40,11 +40,15 @@ ever-growing auto-fix library.
 
 ## What it does / does not do
 
-**Does:** discover the entry point in an arbitrary repo checkout; run it in a
-sane environment (own dir on `PYTHONPATH`, headless matplotlib, OpenMP
+**Does:** discover the entry point in an arbitrary repo checkout — a `.py`
+script *or*, when there is none, the largest Jupyter notebook (converted to a
+runnable script, IPython magics/shell-escapes neutralised); run it in a sane
+environment (own dir on `PYTHONPATH`, headless matplotlib, OpenMP
 duplicate-runtime workaround); on failure, classify the traceback and apply a
 **verified** mechanical repair if one fits; re-run; and either report it now runs
-or emit a hand-off.
+or emit a hand-off. When a repo has no Python at all, it either RUNS it (an R project — see
+"R support" below) or reports *why* it cannot (a data-only repo) instead of a
+bare "NO_ENTRYPOINT".
 
 **Does not:** decide whether the analysis is *correct* (rung 3), fabricate a fix
 for a novel failure, install a package that is actually the repo's own local
@@ -103,6 +107,33 @@ Kept intentionally small — only repairs that are unambiguous and verified:
 
 Add a new one *only* after confirming the fix is unambiguous and verified on a
 real case — do not speculatively enumerate patterns. When in doubt, hand off.
+
+## R support (v0.6)
+
+When a repo has **no Python entry point but is an R project** (`.R`/`.Rmd`
+files, or a `DESCRIPTION`), `attempt_executability` automatically routes to the
+R engine — you call the same function, no separate API. It mirrors the Python
+loop: discover the `.R`/`.Rmd` entry point, run it under `Rscript` (headless
+graphics, a writable user library for installs), classify any failure, install a
+missing package, and re-run.
+
+- **What it auto-fixes:** a missing **CRAN** package (`install.packages`) or a
+  missing **Bioconductor** package (`BiocManager::install`, auto-detected from a
+  known Bioc name list). These are the mechanical R wins.
+- **What it hands off (honestly):** missing data files (`R_MISSING_DATA`),
+  interactive/platform-only calls like `file.choose`/`choose.dir`
+  (`R_INTERACTIVE`), package installs that fail on a system dependency or
+  Bioconductor version lockstep (`R_DEP_INSTALL`), and unresolved
+  `could not find function` (`R_FUNCTION_NOT_FOUND`). Per the R pilot, **most R
+  failures are missing data or environment, not source-code rot** — so the R fix
+  set is deliberately install-focused, not source-patching.
+- **If R is not installed:** the engine returns an honest `R_NOT_AVAILABLE`
+  hand-off rather than crashing. It finds `Rscript` via the
+  `REPRO_CHECK_RSCRIPT` env var, then `PATH`, then sibling conda envs.
+- **Mixed repos** (both `.py` and `.R`) always route to the Python engine.
+
+Hand-offs render through the same `render_handoff_md(result)` and carry
+`language: "R"`.
 
 ## The reproduction ladder (know which rung you are on)
 

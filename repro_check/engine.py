@@ -325,7 +325,7 @@ def detect_scope(target_dir):
     def has(glob):
         return any(p for p in td.rglob(glob) if ".git" not in p.parts)
     py = has("*.py"); ipynb = has("*.ipynb")
-    r = has("*.R") or has("*.r") or (td / "DESCRIPTION").exists()
+    r = has("*.R") or has("*.r") or has("*.Rmd") or has("*.rmd") or (td / "DESCRIPTION").exists()
     if py:
         return None
     if ipynb:
@@ -388,9 +388,14 @@ def attempt_executability(target_dir, max_iters=10, allow_install=False):
                 if converted:
                     ep = converted; notebook_converted = str(nb.relative_to(target_dir)); break
         if ep is None:
+            # R project with no Python entry point: route to the R engine (v0.6)
+            # instead of a bare out-of-scope verdict. If R is unavailable, the R
+            # engine returns an honest R_NOT_AVAILABLE hand-off.
+            if scope == "r":
+                r_res = attempt_r_executability(target_dir, allow_install=allow_install)
+                return rc_shape_r_result(r_res, target_dir)
             reason = {
                 "notebook": "repo is notebook-based but no notebook could be converted to a runnable script",
-                "r": "this is an R project (no Python entry point) — out of scope for a Python runnability tool",
                 "no_python": "no Python or notebook files found — nothing for this tool to run",
                 None: "no runnable Python entry point found",
             }.get(scope, "no runnable Python entry point found")
@@ -855,3 +860,258 @@ def render_markdown(rep: dict) -> str:
              "This is assistant output to accelerate a human reviewer, not a verdict "
              "on the authors.")
     return "\n".join(L)
+
+
+# ---------------------------------------------------------------------------
+# R runnability engine (v0.6). Routed to from attempt_executability() when
+# detect_scope() reports an R project with no Python entry point. Same
+# run -> classify -> fix -> re-run -> hand-off loop as the Python engine, but
+# scoped to R's real failure modes: the mechanical win in R is INSTALL
+# robustness (CRAN / Bioconductor), NOT source patching. Most R stops are
+# missing data or interactive/platform calls, which are honest hand-offs.
+# ---------------------------------------------------------------------------
+
+CRAN_REPO = "https://cloud.r-project.org"
+
+R_ENTRY_NAMES = ["analysis.R", "main.R", "run.R", "reproduce.R", "run_all.R",
+                 "make.R", "figures.R", "master.R", "00_main.R"]
+
+# import names that live on Bioconductor, not CRAN (install.packages fails)
+BIOC_PKGS = {
+    "DESeq2", "edgeR", "limma", "Biobase", "BiocGenerics", "S4Vectors",
+    "IRanges", "GenomicRanges", "SummarizedExperiment", "Biostrings",
+    "GenomicFeatures", "AnnotationDbi", "org.Hs.eg.db", "ComplexHeatmap",
+    "clusterProfiler", "DEXSeq", "tximport", "scran", "scater",
+    "SingleCellExperiment", "fgsea", "GEOquery", "sva", "biomaRt",
+    "RiboCrypt", "ORFik", "multinichenetr", "InSituType",
+}
+
+R_NEXT_ACTION = {
+    "R_MISSING_DATA":       "A data file the R code expects is absent from the repo. Locate "
+                            "it (README, data DOI, external download) and place it where the "
+                            "code looks.",
+    "R_INTERACTIVE":        "The script calls an interactive/platform-only function "
+                            "(file.choose, choose.dir, readline, menu, View) that cannot run "
+                            "headless. Refactor it to take the path/input as a variable or "
+                            "command-line argument, then re-run.",
+    "R_DEP_INSTALL":        "A CRAN/Bioconductor package failed to install \u2014 usually a missing "
+                            "system dependency (compilers, libxml2/libcurl/GDAL headers) or "
+                            "Bioconductor version lockstep. Install the system libraries, or "
+                            "match the Bioconductor release to your R version, then retry.",
+    "R_FUNCTION_NOT_FOUND": "A function could not be found \u2014 likely an uninstalled package's "
+                            "export or an API change. Identify which package provides it and "
+                            "install/pin that package.",
+    "R_NOT_AVAILABLE":      "R (Rscript) is not installed or not on PATH, so this R project "
+                            "cannot be run. Install R, or set the REPRO_CHECK_RSCRIPT "
+                            "environment variable to your Rscript path, then re-run.",
+    "R_GENERIC":            "Novel R failure outside the known pattern set. Read the traceback "
+                            "and repair directly, then re-run.",
+}
+
+
+def rc_find_rscript():
+    """Locate an Rscript binary. Order: explicit REPRO_CHECK_RSCRIPT override,
+    PATH (shutil.which), then sibling conda envs of the current prefix (R is
+    commonly in its own env). Returns the path str, or None if R is unavailable."""
+    import glob
+    override = os.environ.get("REPRO_CHECK_RSCRIPT")
+    if override and Path(override).exists():
+        return override
+    w = shutil.which("Rscript")
+    if w:
+        return w
+    prefix = os.environ.get("CONDA_PREFIX")
+    if prefix:
+        for cand in glob.glob(str(Path(prefix).parent / "*" / "bin" / "Rscript")):
+            return cand
+    return None
+
+
+def rc_r_libs_user():
+    """Writable user library for runtime installs (a conda R lib is read-only)."""
+    p = Path(os.environ.get("R_LIBS_USER") or (Path.cwd() / ".Rlib")).resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    return str(p)
+
+
+def discover_r_entrypoint(target_dir):
+    """Find the most likely R entry script. Prefers a known entry NAME, then
+    shallower paths / code|src|scripts|R|analysis dirs. .R and .Rmd both count;
+    .Rmd is only chosen if no .R exists (rendering it needs rmarkdown)."""
+    td = Path(target_dir)
+    rs = [p for p in td.rglob("*.R")
+          if not any(seg in {".git", "man", "tests", "testthat", "vignettes"}
+                     for seg in p.relative_to(td).parts[:-1])]
+    pool = rs
+    if not pool:
+        pool = [p for p in td.rglob("*.Rmd") if ".git" not in p.parts]
+    if not pool:
+        return None
+
+    def score(p):
+        rel = p.relative_to(td)
+        name_rank = R_ENTRY_NAMES.index(p.name) if p.name in R_ENTRY_NAMES else len(R_ENTRY_NAMES)
+        in_code = 0 if any(s in {"code", "src", "scripts", "R", "analysis"} for s in rel.parts[:-1]) else 1
+        return (name_rank, in_code, len(rel.parts), len(rel.as_posix()))
+
+    return sorted(pool, key=score)[0]
+
+
+def rc_run_r(script, target_dir, rscript, timeout=180):
+    """Run an R script (or render an .Rmd) with the writable user lib on the
+    path and a headless graphics device. Returns {returncode, stdout, stderr}."""
+    script = Path(script)
+    libs = rc_r_libs_user()
+    env = {**os.environ, "R_LIBS_USER": libs,
+           "R_DEFAULT_DEVICE": "png", "MPLBACKEND": "Agg"}
+    prelude = '.libPaths(c("%s", .libPaths())); ' % libs
+    if script.suffix.lower() == ".rmd":
+        cmd = [rscript, "-e", prelude + 'rmarkdown::render("%s")' % script.name]
+    else:
+        cmd = [rscript, "-e", prelude + 'source("%s", echo=FALSE)' % script.name]
+    try:
+        r = subprocess.run(cmd, cwd=str(script.parent), capture_output=True,
+                           text=True, timeout=timeout, env=env)
+        return {"returncode": r.returncode, "stdout": r.stdout, "stderr": r.stderr}
+    except subprocess.TimeoutExpired:
+        return {"returncode": 124, "stdout": "", "stderr": "TIMEOUT after %ss" % timeout}
+
+
+def classify_r_failure(stderr):
+    """Map an R error tail to a fix category. Returns {pattern, module?}."""
+    m = re.search(r"there is no package called [`'\"]([\w.]+)[`'\"]", stderr)
+    if m:
+        pkg = m.group(1)
+        return {"pattern": "MISSING_PKG_BIOC" if pkg in BIOC_PKGS else "MISSING_PKG_CRAN",
+                "module": pkg}
+    m = re.search(r"Error in library\(([\w.]+)\)", stderr) or \
+        re.search(r"Error in require\(([\w.]+)\)", stderr)
+    if m:
+        pkg = m.group(1)
+        return {"pattern": "MISSING_PKG_BIOC" if pkg in BIOC_PKGS else "MISSING_PKG_CRAN",
+                "module": pkg}
+    # data / path not found — R has many phrasings across base, readxl, here, fs
+    if re.search(r"cannot open file|No such file or directory|cannot open the connection"
+                 r"|`?path`? does not exist|does not exist:|cannot find the file"
+                 r"|file.*not found|Error.*reading", stderr, re.I):
+        return {"pattern": "MISSING_DATA", "module": None}
+    # interactive / platform-only functions that can't run headless (real hand-off)
+    m = re.search(r'could not find function ["\u201c]?(choose\.dir|choose\.files|winDialog|'
+                  r'file\.choose|readline|menu|View)["\u201d]?', stderr)
+    if m:
+        return {"pattern": "INTERACTIVE_OR_PLATFORM", "module": m.group(1)}
+    if re.search(r"could not find function", stderr):
+        return {"pattern": "FUNCTION_NOT_FOUND", "module": None}
+    return {"pattern": "UNKNOWN", "module": None}
+
+
+def rc_install_r_pkg(pkg, rscript, bioc=False, timeout=600):
+    """Install a CRAN or Bioconductor package to the writable user lib, then
+    verify it loads. Returns (ok_bool, log_tail)."""
+    libs = rc_r_libs_user()
+    lp = '.libPaths(c("%s", .libPaths())); ' % libs
+    if bioc:
+        expr = (lp + 'if(!requireNamespace("BiocManager",quietly=TRUE)) '
+                'install.packages("BiocManager",repos="%s",quiet=TRUE); ' % CRAN_REPO
+                + 'BiocManager::install("%s",update=FALSE,ask=FALSE)' % pkg)
+    else:
+        expr = lp + 'install.packages("%s",repos="%s",quiet=TRUE)' % (pkg, CRAN_REPO)
+    env = {**os.environ, "R_LIBS_USER": libs}
+    try:
+        r = subprocess.run([rscript, "-e", expr], capture_output=True,
+                           text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        return False, "install timeout (%ss)" % timeout
+    chk = subprocess.run([rscript, "-e", lp + 'cat(requireNamespace("%s",quietly=TRUE))' % pkg],
+                         capture_output=True, text=True, env=env)
+    return chk.stdout.strip() == "TRUE", (r.stderr or r.stdout)[-300:]
+
+
+def attempt_r_executability(target_dir, max_iters=12, allow_install=True):
+    """Rung-1 for R: discover the .R/.Rmd entry point and try to make it run,
+    installing missing CRAN/Bioconductor packages. Returns a result dict
+    analogous to the Python engine (shaped for render_handoff_md by
+    rc_shape_r_result)."""
+    target_dir = Path(target_dir).resolve()
+    rscript = rc_find_rscript()
+    if rscript is None:
+        return {"status": "NEEDS_AGENT", "language": "R", "target": str(target_dir),
+                "entrypoint": "(no R interpreter)", "installed": [], "attempts": [],
+                "reason": "R_NOT_AVAILABLE", "traceback": ""}
+    ep = discover_r_entrypoint(target_dir)
+    if ep is None:
+        return {"status": "NO_ENTRYPOINT", "language": "R", "target": str(target_dir),
+                "scope": "r", "reason": "R project but no .R/.Rmd entry script was found"}
+
+    installed, attempts, tried = [], [], set()
+    for i in range(max_iters):
+        r = rc_run_r(ep, target_dir, rscript)
+        err_tail = (r["stderr"].strip().splitlines()[-1] if r["returncode"] and r["stderr"].strip() else None)
+        attempts.append({"iter": i, "returncode": r["returncode"], "error": err_tail,
+                         "stderr": r["stderr"][-1500:]})
+        if r["returncode"] == 0:
+            return {"status": "RAN" if installed else "RAN_AS_IS", "language": "R",
+                    "entrypoint": str(ep.relative_to(target_dir)),
+                    "installed": installed, "attempts": attempts}
+        diag = classify_r_failure(r["stderr"])
+        pkg = diag.get("module")
+        if allow_install and diag["pattern"] in ("MISSING_PKG_CRAN", "MISSING_PKG_BIOC") \
+                and pkg and pkg not in tried:
+            tried.add(pkg)
+            ok, log = rc_install_r_pkg(pkg, rscript, bioc=(diag["pattern"] == "MISSING_PKG_BIOC"))
+            if ok:
+                installed.append({"pkg": pkg, "source": "bioc" if diag["pattern"] == "MISSING_PKG_BIOC" else "cran"})
+                continue
+            return {"status": "NEEDS_AGENT", "language": "R",
+                    "entrypoint": str(ep.relative_to(target_dir)),
+                    "installed": installed, "attempts": attempts,
+                    "reason": "install of %s failed" % pkg, "diagnosis": diag,
+                    "traceback": r["stderr"][-1500:]}
+        return {"status": "NEEDS_AGENT", "language": "R",
+                "entrypoint": str(ep.relative_to(target_dir)),
+                "installed": installed, "attempts": attempts,
+                "reason": diag["pattern"], "diagnosis": diag,
+                "traceback": r["stderr"][-1500:]}
+    return {"status": "NEEDS_AGENT", "language": "R",
+            "entrypoint": str(ep.relative_to(target_dir)),
+            "installed": installed, "attempts": attempts,
+            "reason": "max_iters reached", "traceback": ""}
+
+
+def rc_shape_r_result(res, target_dir):
+    """Add the hand-off fields render_handoff_md expects, so an R NEEDS_AGENT
+    stop renders the same way a Python one does, with R-specific next actions."""
+    res.setdefault("language", "R")
+    if res.get("status") != "NEEDS_AGENT":
+        return res
+    reason = res.get("reason", "") or ""
+    diag = res.get("diagnosis") or {}
+    pat = diag.get("pattern")
+    if reason == "R_NOT_AVAILABLE":
+        key = "R_NOT_AVAILABLE"
+    elif "install of" in reason or "install timeout" in reason:
+        key = "R_DEP_INSTALL"
+    elif pat == "MISSING_DATA":
+        key = "R_MISSING_DATA"
+    elif pat == "INTERACTIVE_OR_PLATFORM":
+        key = "R_INTERACTIVE"
+    elif pat == "FUNCTION_NOT_FOUND":
+        key = "R_FUNCTION_NOT_FOUND"
+    else:
+        key = "R_GENERIC"
+    installed = res.get("installed", [])
+    attempts = res.get("attempts", [])
+    advanced = len(attempts) > 1 or bool(installed)
+    res["next_action_key"] = key
+    res["suggested_next_action"] = R_NEXT_ACTION[key]
+    res["already_applied"] = {"patches": [],
+                              "installed": [d.get("pkg") for d in installed]}
+    res.setdefault("entrypoint", "(no R entry point resolved)")
+    res.setdefault("run_as_module", None)
+    res.setdefault("cli_spec", None)
+    res.setdefault("traceback", "")
+    res.setdefault("patches", [])
+    res["stopping_rung"] = ("1 (executability) \u2014 advanced but not running" if advanced
+                            else "0 (does not start)")
+    res["environment"] = {"Rscript": rc_find_rscript() or "(not found)"}
+    return res

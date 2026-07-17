@@ -15,7 +15,7 @@ is correct. See SKILL.md / README.md for the full model.
 import argparse, json, sys
 from pathlib import Path
 
-# The engine lives in kernel.py next to this file.
+# The engine lives in engine.py next to this file.
 from . import engine as rk
 
 

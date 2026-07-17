@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "repro-check"
-version = "0.5.0"
-description = "A runnability scaffold for reproducing computational papers: makes old code run again, and hands back exactly where it stopped when it can't."
+version = "0.6.0"
+description = "A runnability scaffold for reproducing computational papers (Python & R): makes old code run again, and hands back exactly where it stopped when it can't."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [{name = "nelsonjordanme"}]
-keywords = ["reproducibility", "research-software", "dependency-rot", "reproducible-research"]
+keywords = ["reproducibility", "research-software", "dependency-rot", "reproducible-research", "python", "r", "computational-science"]
 dependencies = ["numpy>=1.20", "pandas>=1.3", "scipy>=1.7"]
 
 [project.urls]
