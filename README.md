@@ -18,7 +18,7 @@ applies known fixes when it breaks — repeating until one of two things is true
 
 The one thing it will never do is pretend. A green result means *the code runs*
 — **not** that the results are scientifically correct. That harder question is
-left to you, on purpose. (More on this below under "The reproduction ladder".)
+left to you, on purpose. (More on this below under "Scope & honesty".)
 
 ```bash
 pip install repro-check
