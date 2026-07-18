@@ -118,6 +118,43 @@ this run (synthesized from the tool's real captured output) is in
 [`demo/quickstart.cast`](demo/quickstart.cast) (play with
 [asciinema](https://asciinema.org): `asciinema play demo/quickstart.cast`).
 
+## Use it in CI (GitHub Action)
+
+Guard your repo's runnability on every push. Add
+`.github/workflows/repro-check.yml`:
+
+```yaml
+name: repro-check
+on: [push, pull_request]
+jobs:
+  runnability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nelsonjordanme/repro-check@v0.10.0
+        with:
+          path: '.'
+          fail-on-handoff: 'false'   # report-only; flip to 'true' to gate CI
+```
+
+The action installs repro-check, runs it, writes a summary panel to the job
+(status, entry point, fixes applied, the rung it certifies), and exposes
+`steps.<id>.outputs.status`. Exit mapping: **runs → pass**, **hand-off →
+warning** (fails the job only if `fail-on-handoff: 'true'`), **hard failure →
+fail**. Copyable examples are in [`examples/`](examples/).
+
+**Live badge** (optional). Add the badge-publish workflow from
+[`examples/badge-publish.yml`](examples/badge-publish.yml) — it writes a
+shields.io endpoint JSON to a `badges` branch — then embed:
+
+```markdown
+![repro-check](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OWNER/REPO/badges/badge.json)
+```
+
+The badge is honest by construction: it reads *runs as-cloned* / *runs (after
+fixes)* / *needs a human step* — never "reproducible", which repro-check
+deliberately never claims.
+
 ## The model: scaffold clears the runway, agent flies the plane
 
 `repro-check` owns the mechanical part and stops honestly at the judgment part:

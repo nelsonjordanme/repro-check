@@ -1,0 +1,45 @@
+# OPTIONAL live-badge workflow. Copy into YOUR repo at
+# .github/workflows/repro-check-badge.yml if you want a self-updating
+# "repro-check: runs" badge in your README.
+#
+# It runs repro-check, generates a shields.io endpoint JSON, and commits it to a
+# dedicated `badges` branch (nothing on your main branch is touched). Then embed:
+#
+#   ![repro-check](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/OWNER/REPO/badges/badge.json)
+#
+# The badge is honest: it says "runs as-cloned" / "runs (after fixes)" /
+# "needs a human step" — never "reproducible".
+name: repro-check-badge
+
+on:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  badge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Generate badge JSON
+        run: |
+          python -m pip install --quiet repro-check
+          repro-check . --json > result.json || true
+          curl -sSfL "https://raw.githubusercontent.com/nelsonjordanme/repro-check/v0.10.0/.github/make_badge.py" -o make_badge.py
+          mkdir -p _badge
+          python make_badge.py result.json > _badge/badge.json
+          cat _badge/badge.json
+
+      - name: Publish to badges branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: badges
+          publish_dir: ./_badge
+          keep_files: false

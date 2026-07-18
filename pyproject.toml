@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "repro-check"
-version = "0.9.3"
+version = "0.10.0"
 description = "A runnability scaffold for reproducing computational papers (Python & R): makes old code run again, and hands back exactly where it stopped when it can't."
 readme = "README.md"
 requires-python = ">=3.9"

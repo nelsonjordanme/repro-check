@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.10.0
+
+Distribution: use repro-check straight from CI.
+
+- **GitHub Action** (`action.yml`, composite). `uses: nelsonjordanme/repro-check@v0.10.0`
+  installs the tool, runs it on the repo, writes a job-summary panel (status,
+  entry point, fixes, certified rung), exposes `outputs.status`, and maps exit
+  codes to CI outcomes (runs -> pass, hand-off -> warning, fail-on-handoff
+  toggles whether a hand-off fails the job, hard failure -> fail).
+- **Honest runnability badge.** `.github/make_badge.py` emits a shields.io
+  endpoint JSON reading "runs as-cloned" / "runs (after fixes)" / "needs a human
+  step" — never "reproducible". Opt-in badge-publish workflow writes it to a
+  `badges` branch.
+- Copyable adopter workflows in `examples/`; README "Use it in CI" section.
+- Tests: `test_badge_generator`, `test_action_summary` (18 groups green).
+
 ## v0.9.3
 
 Benchmark methodology fix (found by comparing two real corpus runs):

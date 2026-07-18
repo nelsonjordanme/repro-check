@@ -1,0 +1,60 @@
+name: 'repro-check runnability'
+description: 'Check that a research repo still runs under a modern setup — find the entry point, apply verified fixes, and fail honestly when a failure needs a human.'
+author: 'repro-check'
+branding:
+  icon: 'refresh-cw'
+  color: 'blue'
+
+inputs:
+  path:
+    description: 'Directory to check (default: the repo root).'
+    required: false
+    default: '.'
+  version:
+    description: 'Version spec appended to the pip install, e.g. "==0.10.0" or ">=0.9.3". Empty installs the latest release.'
+    required: false
+    default: ''
+  no-install:
+    description: 'Pass --no-install so repro-check does not pip-install the declared dependencies (faster, stricter as-cloned check).'
+    required: false
+    default: 'false'
+  fail-on-handoff:
+    description: 'Fail the job when repro-check hands off (exit 2 — needs a human step). Set to "false" to report-only without failing CI.'
+    required: false
+    default: 'true'
+
+outputs:
+  status:
+    description: 'RAN | RAN_AS_IS | NEEDS_AGENT | NO_ENTRYPOINT | FAILED_TO_RUN'
+    value: ${{ steps.run.outputs.status }}
+  result-json:
+    description: 'Path to the full JSON result written by repro-check.'
+    value: ${{ steps.run.outputs.json_path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install repro-check
+      shell: bash
+      run: python -m pip install --quiet "repro-check${{ inputs.version }}"
+
+    - name: Run repro-check
+      id: run
+      shell: bash
+      env:
+        RC_PATH: ${{ inputs.path }}
+        RC_NO_INSTALL: ${{ inputs.no-install }}
+        RC_FAIL_ON_HANDOFF: ${{ inputs.fail-on-handoff }}
+      run: |
+        set +e
+        extra=""
+        if [ "$RC_NO_INSTALL" = "true" ]; then extra="--no-install"; fi
+        repro-check "$RC_PATH" $extra --json > repro_check_result.json
+        code=$?
+        set -e
+        python "$GITHUB_ACTION_PATH/.github/action_summary.py" repro_check_result.json "$code"

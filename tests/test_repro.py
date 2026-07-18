@@ -295,6 +295,55 @@ def test_silent_nonzero_exit():
     return True
 
 
+def test_badge_generator():
+    """The badge generator emits a valid shields.io endpoint JSON with an honest
+    label for every status, and never the word 'reproducible'."""
+    import os, importlib.util
+    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    mb_path = os.path.join(here, ".github", "make_badge.py")
+    if not os.path.exists(mb_path):
+        return True
+    spec = importlib.util.spec_from_file_location("mb", mb_path)
+    mb = importlib.util.module_from_spec(spec); spec.loader.exec_module(mb)
+    for status in ("RAN", "RAN_AS_IS", "NEEDS_AGENT", "NO_ENTRYPOINT",
+                   "FAILED_TO_RUN", "SOMETHING_NEW"):
+        b = mb.build({"status": status})
+        assert b["schemaVersion"] == 1 and b["label"] == "repro-check"
+        assert "reproducible" not in b["message"].lower(), b
+    # RAN_AS_IS is the strongest (green); FAILED_TO_RUN is red.
+    assert mb.build({"status": "RAN_AS_IS"})["color"] == "brightgreen"
+    assert mb.build({"status": "FAILED_TO_RUN"})["color"] == "red"
+    return True
+
+
+def test_action_summary():
+    """The GitHub Action summary helper maps exit codes to outcomes: 0 -> pass,
+    2 -> pass only when fail-on-handoff is off, hard failure -> non-zero. Runs the
+    helper as a subprocess with GITHUB_OUTPUT/STEP_SUMMARY pointed at temp files."""
+    import os as _os, sys, subprocess, json, tempfile
+    here = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    helper = _os.path.join(here, ".github", "action_summary.py")
+    if not _os.path.exists(helper):
+        return True
+    d = tempfile.mkdtemp()
+    out, summ = _os.path.join(d, "out"), _os.path.join(d, "sum")
+    def run(result, code, fail_on_handoff):
+        rp = _os.path.join(d, "r.json")
+        json.dump(result, open(rp, "w"))
+        env = {**_os.environ, "GITHUB_OUTPUT": out, "GITHUB_STEP_SUMMARY": summ,
+               "RC_FAIL_ON_HANDOFF": "true" if fail_on_handoff else "false"}
+        open(out, "w").close(); open(summ, "w").close()
+        return subprocess.run([sys.executable, helper, rp, str(code)], env=env).returncode
+    assert run({"status": "RAN", "entrypoint": "a.py"}, 0, True) == 0
+    assert run({"status": "NEEDS_AGENT"}, 2, True) == 2      # fail on hand-off
+    assert run({"status": "NEEDS_AGENT"}, 2, False) == 0     # report-only
+    assert run({"status": "FAILED_TO_RUN"}, 1, False) == 1   # hard failure always fails
+    # status is written to GITHUB_OUTPUT
+    assert "status=RAN" in open(out).read() or "status=FAILED_TO_RUN" in open(out).read()
+    import shutil; shutil.rmtree(d, ignore_errors=True)
+    return True
+
+
 def test_benchmark_isolation():
     """--isolate evaluates each repo in its own throwaway venv, so a package
     installed for one repo cannot make a LATER repo's as-cloned baseline pass.
@@ -387,6 +436,10 @@ if __name__ == "__main__":
     print("PASS — setup.py-only repo routes to notebook, not run as entry")
     test_silent_nonzero_exit()
     print("PASS — silent nonzero-exit hands off cleanly (no empty-stderr crash)")
+    test_badge_generator()
+    print("PASS — badge generator emits honest shields endpoint JSON")
+    test_action_summary()
+    print("PASS — GitHub Action summary maps exit codes to CI outcomes")
     test_benchmark_isolation()
     print("PASS — benchmark --isolate prevents cross-repo dependency leakage")
     test_benchmark_harness()

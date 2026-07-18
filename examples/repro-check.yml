@@ -1,0 +1,34 @@
+# Example workflow for a research repo that wants to self-check runnability.
+# Copy this into YOUR repo at .github/workflows/repro-check.yml
+#
+# It runs repro-check on every push and pull request and posts a summary panel.
+# For a live README badge, see examples/badge-publish.yml (opt-in, needs
+# contents: write).
+name: repro-check
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  runnability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check runnability
+        id: rc
+        uses: nelsonjordanme/repro-check@v0.10.0
+        with:
+          path: '.'
+          # Report-only: don't fail CI on an honest hand-off. Flip to 'true'
+          # once your repo reaches RAN/RAN_AS_IS to guard against regressions.
+          fail-on-handoff: 'false'
+
+      - name: Show verdict
+        run: |
+          echo "repro-check verdict is ${{ steps.rc.outputs.status }}"
