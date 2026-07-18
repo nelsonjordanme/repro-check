@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.10.2
+
+- Shorten the GitHub Action `description` in `action.yml` to under 125 characters
+  so it passes GitHub Marketplace publishing validation (no behaviour change).
+
 ## v0.10.1
 
 - **Clean CI annotations.** `test_action_summary` ran the summary helper as a

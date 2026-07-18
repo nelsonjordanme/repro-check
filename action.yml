@@ -1,5 +1,5 @@
 name: 'repro-check runnability'
-description: 'Check that a research repo still runs under a modern setup — find the entry point, apply verified fixes, and fail honestly when a failure needs a human.'
+description: 'Check a research repo still runs under a modern setup: find the entry point, apply verified fixes, hand off honestly.'
 author: 'repro-check'
 branding:
   icon: 'refresh-cw'
