@@ -43,14 +43,18 @@ takes reasoning, not a fixed script.
 **Reproducible benchmark.** That original study did not record its corpus URLs,
 so `benchmark/rescience_manifest.json` ships a fresh, re-runnable corpus of 22
 Python replication repos taken from the ReScience journal bibliography. A full
-run on a build-capable machine (`benchmark/run_benchmark.py --clone`) measured
-**8/22 (36%) as-cloned → 10/22 (45%) after repro-check**, with every remaining
-repo given a diagnosed hand-off. Of the 12 hand-offs, most are a to-do list
-rather than dead ends: 5 are missing dependencies (install-resolvable on a
-machine with build tools), and the coverage fixes in v0.9.2 (Py2 `xrange`,
-skipping packaging files) convert more of them. Only one was a genuine code-logic
-bug correctly left to a human. Regenerate the table yourself — see
-`benchmark/README.md`.
+isolated run on a build-capable machine
+(`benchmark/run_benchmark.py --clone --isolate`, each repo in its own venv so
+installs can't leak between repos) measured **9/22 (41%) as-cloned → 12/22 (55%)
+after repro-check**, with every remaining repo given a diagnosed hand-off.
+repro-check genuinely rescued three broken repos (henriques:2017, rostami:2017,
+viejo:2016 via the Py2 `xrange` fix). Of the ten hand-offs, most are a to-do list
+rather than dead ends: several are missing dependencies (install-resolvable on a
+machine with build tools) and a couple are removed-API drift; only one was a
+genuine code-logic bug correctly left to a human. **Always pass `--isolate` for
+numbers you intend to quote** — without it, one repo's installs leak into the
+next repo's as-cloned baseline and inflate the count. Regenerate the table
+yourself — see `benchmark/README.md`.
 
 ## Try it in 30 seconds
 
@@ -192,6 +196,13 @@ method is correct (rung 3) or robust (rung 4). **Reproducible ≠ correct**: a
 running repo means it executes, not that the science is sound.
 
 ## Status
+
+v0.9.3 — **trustworthy benchmark.** The harness ran every repo in one shared
+environment, so a dependency installed for one repo leaked into later repos'
+as-cloned baseline and inflated the count (a real run drifted 8→11 as-cloned
+from leaked packages alone). New `--isolate` flag evaluates each repo in its own
+throwaway venv; the first isolated run measured a clean **9/22 as-cloned → 12/22
+after repro-check**. This is now the required setting for quotable numbers.
 
 v0.9.2 — **coverage wins from the real-repo benchmark.** Running the reproducible
 ReScience corpus surfaced two gaps, now fixed: Python-2 builtins used at run time
