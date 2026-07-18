@@ -22,7 +22,7 @@ jobs:
 
       - name: Check runnability
         id: rc
-        uses: nelsonjordanme/repro-check@v0.10.0
+        uses: nelsonjordanme/repro-check@v0.10.1
         with:
           path: '.'
           # Report-only: don't fail CI on an honest hand-off. Flip to 'true'

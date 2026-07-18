@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.10.1
+
+- **Clean CI annotations.** `test_action_summary` ran the summary helper as a
+  subprocess without capturing its output, so the helper's real
+  `::error::`/`::warning::`/`::notice::` GitHub workflow commands leaked into the
+  job log and showed up as annotations (3 errors / 9 warnings) on repro-check's
+  OWN self-test run — cosmetic, but a bad look. The subprocess output is now
+  captured; the suite is annotation-clean.
+- **Robust isolation test.** `test_benchmark_isolation` now treats unparseable
+  output from a build-starved runner (no RAM for a venv, no network for pip) as a
+  skip, not a failure — same as the existing in-process-fallback path.
+
 ## v0.10.0
 
 Distribution: use repro-check straight from CI.

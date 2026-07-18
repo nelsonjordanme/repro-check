@@ -131,7 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: nelsonjordanme/repro-check@v0.10.0
+      - uses: nelsonjordanme/repro-check@v0.10.1
         with:
           path: '.'
           fail-on-handoff: 'false'   # report-only; flip to 'true' to gate CI
