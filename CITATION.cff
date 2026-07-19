@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use repro-check, please cite it using the metadata below."
+title: "repro-check: a runnability scaffold for old or broken research code"
+abstract: >-
+  repro-check takes an old or broken research code repository, tries to run it
+  under a modern environment, applies a small set of verified mechanical fixes
+  (dead packages, removed APIs, broken paths, Python-2 syntax, notebook
+  conversion), and re-runs to prove the fix. When a failure needs human
+  judgment it stops and emits a structured hand-off. It certifies rung 1 (the
+  code runs) and deliberately does not judge scientific correctness.
+type: software
+authors:
+  - name: "nelsonjordanme"
+    website: "https://github.com/nelsonjordanme"
+repository-code: "https://github.com/nelsonjordanme/repro-check"
+url: "https://github.com/nelsonjordanme/repro-check"
+license: MIT
+keywords:
+  - reproducibility
+  - reproducible-research
+  - research-software
+  - computational-science
+  - open-science
+  - python
+  - r
+version: 0.10.3

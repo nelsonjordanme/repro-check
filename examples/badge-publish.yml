@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m pip install --quiet repro-check
           repro-check . --json > result.json || true
-          curl -sSfL "https://raw.githubusercontent.com/nelsonjordanme/repro-check/v0.10.2/.github/make_badge.py" -o make_badge.py
+          curl -sSfL "https://raw.githubusercontent.com/nelsonjordanme/repro-check/v0.10.3/.github/make_badge.py" -o make_badge.py
           mkdir -p _badge
           python make_badge.py result.json > _badge/badge.json
           cat _badge/badge.json

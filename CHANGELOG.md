@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.10.3
+
+- Add `CITATION.cff` so the repo has a native GitHub "Cite this repository"
+  widget and a well-formed metadata record. This release is archived by Zenodo
+  to mint a citable DOI (concept + version DOI).
+
 ## v0.10.2
 
 - Shorten the GitHub Action `description` in `action.yml` to under 125 characters
