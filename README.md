@@ -1,6 +1,8 @@
 # repro-check
 
 [![self-test](https://github.com/nelsonjordanme/repro-check/actions/workflows/selftest.yml/badge.svg)](https://github.com/nelsonjordanme/repro-check/actions/workflows/selftest.yml)
+[![PyPI](https://img.shields.io/pypi/v/repro-check)](https://pypi.org/project/repro-check/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21440809.svg)](https://doi.org/10.5281/zenodo.21440809)
 
 ## What is this?
 
@@ -310,6 +312,17 @@ v0.2 — reframed from a pattern-library to a **scaffold + hand-off** after a
 validated on a synthetic fixture and demonstrated end-to-end on a real repo. The
 verified fix set is kept small on purpose; new traceback→repair patterns are
 welcome but only after verification on a real case.
+
+## How to cite
+
+If repro-check is useful in your work, please cite it. Every release is archived
+on Zenodo with a citable DOI:
+
+> nelsonjordanme. *repro-check: a runnability scaffold for old or broken research
+> code.* Zenodo. https://doi.org/10.5281/zenodo.21440809
+
+The DOI above resolves to the latest version. GitHub's "Cite this repository"
+widget (from [`CITATION.cff`](CITATION.cff)) generates APA/BibTeX on demand.
 
 ## License
 
