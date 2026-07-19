@@ -321,8 +321,10 @@ on Zenodo with a citable DOI:
 > nelsonjordanme. *repro-check: a runnability scaffold for old or broken research
 > code.* Zenodo. https://doi.org/10.5281/zenodo.21440809
 
-The DOI above resolves to the latest version. GitHub's "Cite this repository"
-widget (from [`CITATION.cff`](CITATION.cff)) generates APA/BibTeX on demand.
+For a version-independent citation, use the **concept DOI** shown on the Zenodo
+record under "Cite all versions" (it always resolves to the newest release);
+the DOI above is the v0.10.3 record. GitHub's "Cite this repository" widget
+(from [`CITATION.cff`](CITATION.cff)) generates APA/BibTeX on demand.
 
 ## License
 
