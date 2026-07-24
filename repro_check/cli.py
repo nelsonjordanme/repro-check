@@ -30,6 +30,11 @@ def main(argv=None):
                     help="max repair/re-run iterations (default 14)")
     ap.add_argument("--json", action="store_true",
                     help="emit the full result as JSON instead of a human report")
+    ap.add_argument("--ai-suggest", action="store_true",
+                    help="on a hand-off, ask an LLM to draft a suggested fix using "
+                         "YOUR OWN API key (ANTHROPIC_API_KEY or OPENAI_API_KEY). "
+                         "Off by default; the suggestion is flagged, never applied, "
+                         "and never counted as a fix. No key set = feature unavailable.")
     args = ap.parse_args(argv)
 
     cloned_from = None
@@ -57,6 +62,12 @@ def main(argv=None):
     if cloned_from:
         result["cloned_from"] = cloned_from
 
+    # Opt-in AI suggestion: only on a hand-off, only with the user's own key.
+    # Attached under a separate `ai_suggestion` field — it never touches
+    # patches/installed or the status, so the runnability verdict is unaffected.
+    if args.ai_suggest and result.get("status") == "NEEDS_AGENT":
+        result["ai_suggestion"] = rk.rc_ai_suggest(result, target)
+
     if args.json:
         print(json.dumps(result, indent=2))
     elif result["status"] in ("RAN", "RAN_AS_IS"):
@@ -78,6 +89,15 @@ def main(argv=None):
                   f"does NOT verify {result.get('not_verified', 'scientific correctness')}")
     else:
         print(rk.render_handoff_md(result))
+        ai = result.get("ai_suggestion")
+        if ai is not None:
+            print()
+            if ai.get("available"):
+                print(f"## AI suggestion ({ai['provider']} / {ai['model']})")
+                print(f"_{ai['disclaimer']}_\n")
+                print(ai["suggestion"])
+            else:
+                print(f"## AI suggestion unavailable\n{ai.get('reason')}")
 
     # Exit code: 0 = runs, 2 = needs a human/agent step, 1 = hard failure.
     return {"RAN": 0, "RAN_AS_IS": 0, "NEEDS_AGENT": 2,

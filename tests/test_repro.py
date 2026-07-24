@@ -316,6 +316,62 @@ def test_badge_generator():
     return True
 
 
+def test_ai_resolver_optin():
+    """The AI hand-off resolver is bring-your-own-key: with NO key set it is
+    unavailable (honest reason, no crash, no network), it never mutates the
+    hand-off's fix fields, and the prompt never leaks the key. With a key set,
+    the call path builds the right request (key in header, not body) — verified
+    against a mocked transport so no real network/credential is used."""
+    import os, json
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        os.environ.pop(k, None)
+    # detection with no keys
+    assert rk.rc_ai_detect_provider() == (None, None)
+    ho = {"status": "NEEDS_AGENT", "entrypoint": "run.py", "reason": "missing data",
+          "traceback": "FileNotFoundError: data.csv",
+          "already_applied": {"patches": [], "installed": []},
+          "patches": [], "installed": []}
+    r = rk.rc_ai_suggest(ho, "/tmp")
+    assert r["available"] is False and "API key" in r["reason"]
+    # the suggestion call must not have added or altered any fix fields
+    assert ho["patches"] == [] and ho["installed"] == []
+    # prompt builder is offline and key-free
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-secret"
+    assert rk.rc_ai_detect_provider()[0] == "anthropic"
+    prompt = rk.rc_ai_build_prompt(ho, "/tmp")
+    assert "DIAGNOSIS" in prompt and "sk-ant-secret" not in prompt
+    # openai preference only when anthropic absent
+    os.environ.pop("ANTHROPIC_API_KEY")
+    os.environ["OPENAI_API_KEY"] = "sk-openai-secret"
+    assert rk.rc_ai_detect_provider()[0] == "openai"
+    # call path with a mocked transport: key rides the header, not the JSON body
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-secret"
+    import urllib.request
+    captured = {}
+    real = urllib.request.urlopen
+    class _R:
+        def __init__(self, p): self._p = p
+        def read(self): return json.dumps(self._p).encode()
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    def _fake(req, timeout=60):
+        captured["headers"] = {k.lower(): v for k, v in req.headers.items()}
+        captured["body"] = json.loads(req.data.decode())
+        return _R({"content": [{"type": "text", "text": "DIAGNOSIS: x\nSUGGESTED FIX: y"}]})
+    urllib.request.urlopen = _fake
+    try:
+        out = rk.rc_ai_suggest(ho, "/tmp")
+    finally:
+        urllib.request.urlopen = real
+    assert out["available"] is True and out["provider"] == "anthropic"
+    assert out["suggestion"].startswith("DIAGNOSIS")
+    assert "x-api-key" in captured["headers"]
+    assert "sk-ant-secret" not in json.dumps(captured["body"])
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+        os.environ.pop(k, None)
+    return True
+
+
 def test_action_summary():
     """The GitHub Action summary helper maps exit codes to outcomes: 0 -> pass,
     2 -> pass only when fail-on-handoff is off, hard failure -> non-zero. Runs the
@@ -452,6 +508,8 @@ if __name__ == "__main__":
     print("PASS — badge generator emits honest shields endpoint JSON")
     test_action_summary()
     print("PASS — GitHub Action summary maps exit codes to CI outcomes")
+    test_ai_resolver_optin()
+    print("PASS — AI resolver is bring-your-own-key, off without a key, never auto-applies")
     test_benchmark_isolation()
     print("PASS — benchmark --isolate prevents cross-repo dependency leakage")
     test_benchmark_harness()

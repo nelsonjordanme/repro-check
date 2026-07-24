@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.11.0
+
+- **Optional AI hand-off resolver (`--ai-suggest`), strictly bring-your-own-key.**
+  On a NEEDS_AGENT hand-off, repro-check can ask an LLM to draft a plain-English
+  diagnosis and a *suggested* fix. It ships with NO key/account/endpoint of its
+  own: it calls a provider ONLY when the user has set their OWN
+  `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (their key, their machine, their bill).
+  No key set = feature unavailable, no network call, no fallback. The suggestion
+  is flagged ("suggested — review before applying"), lands in a separate
+  `ai_suggestion` field, is NEVER auto-applied, and NEVER counts as a fix or
+  changes the runnability verdict. Provider-agnostic (Anthropic preferred when
+  both keys present); stdlib-only, adds no dependency. New helpers
+  `rc_ai_detect_provider`, `rc_ai_build_prompt`, `rc_ai_call`, `rc_ai_suggest`;
+  test `test_ai_resolver_optin`.
+
 ## v0.10.3
 
 - Add `CITATION.cff` so the repo has a native GitHub "Cite this repository"

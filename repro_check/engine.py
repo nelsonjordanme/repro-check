@@ -1188,6 +1188,137 @@ def render_handoff_md(h):
     return "\n".join(L)
 
 
+# ---------------------------------------------------------------------------
+# AI hand-off resolver (opt-in, BRING-YOUR-OWN-KEY).
+#
+# When repro-check hits a NEEDS_AGENT hand-off, this can optionally ask an LLM
+# to draft a plain-English explanation and a *suggested* patch for a human to
+# review. It is off by default and has a hard credential contract:
+#
+#   - The tool ships with NO API key, account, or endpoint of its own. It calls
+#     an LLM ONLY when the END USER has set their OWN key in their OWN
+#     environment (ANTHROPIC_API_KEY or OPENAI_API_KEY). Their key, their bill.
+#   - Nothing is auto-applied. The suggestion is returned in a separate field,
+#     clearly flagged "suggested — review before applying", and is NEVER counted
+#     as a repro-check fix (it does not touch patches/installed or the runnability
+#     verdict). A green "RUNS" can never come from an unreviewed AI edit.
+#   - No key set -> the feature is simply unavailable and the honest hand-off is
+#     unchanged. `--ai-suggest` with no key fails loudly, it does not fall back.
+#
+# stdlib only (urllib) so enabling AI adds no dependency.
+# ---------------------------------------------------------------------------
+
+AI_PROVIDERS = {
+    "anthropic": {"env": "ANTHROPIC_API_KEY",
+                  "url": "https://api.anthropic.com/v1/messages",
+                  "model": "claude-3-5-haiku-latest"},
+    "openai": {"env": "OPENAI_API_KEY",
+               "url": "https://api.openai.com/v1/chat/completions",
+               "model": "gpt-4o-mini"},
+}
+
+AI_DISCLAIMER = ("SUGGESTED by an LLM using YOUR configured API key — review before "
+                 "applying. repro-check did NOT apply this and does NOT vouch for it; "
+                 "it is not counted as a fix and does not change the runnability verdict.")
+
+
+def rc_ai_detect_provider():
+    """Return (provider_name, api_key) from the user's OWN environment, or
+    (None, None) if no key is set. Anthropic is preferred when both are present.
+    This is the ONLY place a key is sourced — never embedded, never the tool's."""
+    for name in ("anthropic", "openai"):
+        key = os.environ.get(AI_PROVIDERS[name]["env"], "").strip()
+        if key:
+            return name, key
+    return None, None
+
+
+def rc_ai_build_prompt(handoff, target_dir):
+    """Assemble the review prompt from the hand-off plus a snippet of the entry
+    file. Kept as its own function so it is testable without a network call."""
+    ep_rel = handoff.get("entrypoint", "")
+    src = ""
+    try:
+        ep_path = Path(target_dir) / ep_rel
+        if ep_path.is_file():
+            src = ep_path.read_text(errors="ignore")[:6000]
+    except Exception:
+        src = ""
+    reason = handoff.get("reason") or (handoff.get("diagnosis") or {}).get("pattern", "")
+    tb = (handoff.get("traceback") or "")[-1500:]
+    already = handoff.get("already_applied", {})
+    parts = [
+        "You are helping a researcher get an old code repository running again.",
+        "repro-check applied its mechanical fixes and then STOPPED because the next",
+        "step needs judgment. Suggest the smallest change to get it running.",
+        "",
+        f"Entry point: {ep_rel}",
+        f"Why it stopped: {reason}",
+        f"Already applied automatically: {already.get('patches', [])} "
+        f"installed={already.get('installed', [])}",
+        "",
+        "Traceback (tail):",
+        tb,
+        "",
+        "Entry file (first 6 KB):",
+        src,
+        "",
+        "Respond with exactly two short sections:",
+        "1. DIAGNOSIS: one paragraph, plain English, what is wrong.",
+        "2. SUGGESTED FIX: the concrete change (a unified diff or precise",
+        "   instructions). If the fix needs data/credentials/decisions you cannot",
+        "   see, say so instead of guessing. Do NOT claim the science is correct —",
+        "   only address making it run.",
+    ]
+    return "\n".join(parts)
+
+
+def rc_ai_call(provider, key, prompt, model=None, timeout=60):
+    """POST the prompt to the user's chosen provider with the user's key. Returns
+    the model's text. Raises on transport/HTTP error (caller handles). stdlib only."""
+    import urllib.request
+    cfg = AI_PROVIDERS[provider]
+    model = model or cfg["model"]
+    if provider == "anthropic":
+        body = {"model": model, "max_tokens": 1024,
+                "messages": [{"role": "user", "content": prompt}]}
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01",
+                   "content-type": "application/json"}
+    else:  # openai-compatible
+        body = {"model": model, "max_tokens": 1024,
+                "messages": [{"role": "user", "content": prompt}]}
+        headers = {"Authorization": "Bearer " + key, "content-type": "application/json"}
+    req = urllib.request.Request(cfg["url"], data=json.dumps(body).encode(),
+                                 headers=headers, method="POST")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.loads(r.read().decode())
+    if provider == "anthropic":
+        return "".join(b.get("text", "") for b in data.get("content", [])).strip()
+    return data["choices"][0]["message"]["content"].strip()
+
+
+def rc_ai_suggest(handoff, target_dir, model=None):
+    """Orchestrate the opt-in AI suggestion. Returns a dict:
+      {available: bool, provider, model, suggestion, disclaimer}  on success, or
+      {available: False, reason: <why>}  when no key is set / the call failed.
+    NEVER raises into the caller and NEVER mutates the hand-off's fix fields."""
+    provider, key = rc_ai_detect_provider()
+    if not provider:
+        return {"available": False,
+                "reason": ("no API key set — export ANTHROPIC_API_KEY or "
+                           "OPENAI_API_KEY (your own key; the request runs on your "
+                           "machine and bills your account)")}
+    try:
+        prompt = rc_ai_build_prompt(handoff, target_dir)
+        text = rc_ai_call(provider, key, prompt, model=model)
+    except Exception as ex:
+        return {"available": False,
+                "reason": f"{provider} request failed: {type(ex).__name__}: {ex}"}
+    return {"available": True, "provider": provider,
+            "model": model or AI_PROVIDERS[provider]["model"],
+            "suggestion": text, "disclaimer": AI_DISCLAIMER}
+
+
 def compare_value(claimed, observed, kind, tol=None):
     """Compare one claim to its reproduced value; return a status dict."""
     if tol is None:

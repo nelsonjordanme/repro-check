@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: nelsonjordanme/repro-check@v0.10.3
+      - uses: nelsonjordanme/repro-check@v0.11.0
         with:
           path: '.'
           fail-on-handoff: 'false'   # report-only; flip to 'true' to gate CI
@@ -156,6 +156,32 @@ shields.io endpoint JSON to a `badges` branch — then embed:
 The badge is honest by construction: it reads *runs as-cloned* / *runs (after
 fixes)* / *needs a human step* — never "reproducible", which repro-check
 deliberately never claims.
+
+## Optional AI suggestions on a hand-off (bring your own key)
+
+When repro-check hands off, `--ai-suggest` can ask an LLM to draft a plain-English
+diagnosis and a *suggested* fix for you to review:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...        # or OPENAI_API_KEY=sk-...
+repro-check path/to/repo --ai-suggest
+```
+
+**This is strictly bring-your-own-key.** repro-check ships with no API key,
+account, or endpoint of its own:
+
+- It calls an LLM **only** when you have set **your own** key
+  (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) in **your** environment. The request
+  runs from your machine, with your key, and bills **your** account. Nothing is
+  routed through anyone else.
+- No key set → the flag is simply unavailable and repro-check behaves exactly as
+  without it (honest hand-off, no network call). It never silently falls back to
+  a default.
+- The suggestion is **flagged, never auto-applied, and never counted as a fix.**
+  It appears under a separate `ai_suggestion` field and does not change the
+  runnability verdict — a green *RUNS* can never come from an unreviewed AI edit.
+  It stays on the honest side of the scaffold/agent line: a smarter hand-off, not
+  an oracle.
 
 ## The model: scaffold clears the runway, agent flies the plane
 
